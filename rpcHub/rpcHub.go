@@ -96,7 +96,7 @@ func dialRpcClient(servAddr string, portNo uint16) (*rpc.Client, net.Conn) {
 			break
 		}
 
-		log.Warnf("Error %v connecting to %s:%s. Retrying..", err, servAddr, portNo)
+		log.Warnf("Error %v connecting to %s:%d. Retrying..", err, servAddr, portNo)
 		// Sleep for a second and retry again
 		time.Sleep(1 * time.Second)
 	}

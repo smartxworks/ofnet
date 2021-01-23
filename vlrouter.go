@@ -1196,7 +1196,7 @@ func (vl *Vlrouter) AddUplink(uplinkPort *PortInfo) error {
 
 	intf, err := net.InterfaceByName(linkInfo.Name)
 	if err != nil {
-		log.Debugf("Unable to update router mac to uplink mac:err", err)
+		log.Debugf("Unable to update router mac to uplink mac. Err: %v", err)
 		return err
 	}
 	vl.myRouterMac = intf.HardwareAddr

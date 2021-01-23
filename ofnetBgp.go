@@ -133,7 +133,7 @@ func (self *OfnetBgp) StartProtoServer(routerInfo *OfnetProtoRouterInfo) error {
 	}
 
 	intfIP := fmt.Sprintf("%s/%d", self.routerIP, len)
-	log.Debugf("Creating inb01 with ", intfIP)
+	log.Debugf("Creating inb01 with %s", intfIP)
 	ofPortno, _ := self.agent.ovsDriver.GetOfpPortNo(self.intfName)
 
 	link, err = netlink.LinkByName(self.intfName)
@@ -184,7 +184,7 @@ func (self *OfnetBgp) StartProtoServer(routerInfo *OfnetProtoRouterInfo) error {
 		return err
 	}
 	self.agent.endpointDb.Set(epid, ep)
-	self.agent.localEndpointDb.Set(string(ep.PortNo), ep)
+	self.agent.localEndpointDb.Set(fmt.Sprint(ep.PortNo), ep)
 
 	// global configuration
 	global := &bgpconf.Global{
@@ -222,7 +222,7 @@ func (self *OfnetBgp) StopProtoServer() error {
 	epreg := self.agent.getEndpointByIpVrf(net.ParseIP(self.routerIP), "default")
 	if epreg != nil {
 		self.agent.endpointDb.Remove(epreg.EndpointID)
-		self.agent.localEndpointDb.Remove(string(epreg.PortNo))
+		self.agent.localEndpointDb.Remove(fmt.Sprint(epreg.PortNo))
 		err := self.agent.datapath.RemoveLocalEndpoint(*epreg)
 		if err != nil {
 			return err

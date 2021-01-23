@@ -309,7 +309,7 @@ func (self *OfnetAgent) getEndpointByIpVrf(ipAddr net.IP, vrf string) *OfnetEndp
 
 // GetLocalEndpoint finds the endpoint based on the port number
 func (self *OfnetAgent) getLocalEndpoint(portNo uint32) *OfnetEndpoint {
-	ep, found := self.localEndpointDb.Get(string(portNo))
+	ep, found := self.localEndpointDb.Get(fmt.Sprint(portNo))
 	if found {
 		return ep.(*OfnetEndpoint)
 	}
@@ -330,7 +330,7 @@ func (self *OfnetAgent) Delete() error {
 		}
 	}
 	if self.ofSwitch != nil {
-		log.Infof("Delete for switch %s", self.ofSwitch.DPID().String)
+		log.Infof("Delete for switch %s", self.ofSwitch.DPID().String())
 		self.ofSwitch.Disconnect()
 	}
 
@@ -548,7 +548,7 @@ func (self *OfnetAgent) AddLocalEndpoint(endpoint EndpointInfo) error {
 
 	epId := self.getEndpointIdByIpVlan(endpoint.IpAddr, endpoint.Vlan)
 	// ignore duplicate adds
-	if ep, _ := self.localEndpointDb.Get(string(endpoint.PortNo)); ep != nil {
+	if ep, _ := self.localEndpointDb.Get(fmt.Sprint(endpoint.PortNo)); ep != nil {
 		e := ep.(*OfnetEndpoint)
 		if e.EndpointID == epId {
 			return nil
@@ -600,7 +600,7 @@ func (self *OfnetAgent) AddLocalEndpoint(endpoint EndpointInfo) error {
 	// Add the endpoint to local routing table
 
 	self.endpointDb.Set(epId, epreg)
-	self.localEndpointDb.Set(string(endpoint.PortNo), epreg)
+	self.localEndpointDb.Set(fmt.Sprint(endpoint.PortNo), epreg)
 
 	// Send the endpoint to all known masters
 	self.masterDbMutex.Lock()
@@ -655,7 +655,7 @@ func (self *OfnetAgent) RemoveLocalEndpoint(portNo uint32) error {
 	self.incrStats("RemoveLocalEndpoint")
 
 	// find the local copy
-	epreg, _ := self.localEndpointDb.Get(string(portNo))
+	epreg, _ := self.localEndpointDb.Get(fmt.Sprint(portNo))
 	if epreg == nil {
 		err := fmt.Errorf("Endpoint not found for port %d", portNo)
 		log.Error(err)
@@ -672,7 +672,7 @@ func (self *OfnetAgent) RemoveLocalEndpoint(portNo uint32) error {
 
 	// delete the endpoint from local endpoint table
 	self.endpointDb.Remove(ep.EndpointID)
-	self.localEndpointDb.Remove(string(portNo))
+	self.localEndpointDb.Remove(fmt.Sprint(portNo))
 	self.portVlanMapMutex.Lock()
 	delete(self.portVlanMap, portNo)
 	self.portVlanMapMutex.Unlock()
@@ -708,7 +708,7 @@ func (self *OfnetAgent) UpdateLocalEndpoint(endpoint EndpointInfo) error {
 	self.incrStats("UpdateLocalEndpoint")
 
 	// find the local endpoint first
-	epreg, _ := self.localEndpointDb.Get(string(endpoint.PortNo))
+	epreg, _ := self.localEndpointDb.Get(fmt.Sprint(endpoint.PortNo))
 	if epreg == nil {
 		log.Errorf("Endpoint not found for port %d", endpoint.PortNo)
 		return errors.New("Endpoint not found")
