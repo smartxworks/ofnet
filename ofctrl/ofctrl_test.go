@@ -498,8 +498,8 @@ func TestMatchSetTunnelId(t *testing.T) {
 
 // TestMatchSetIpFields verifies match & set for ip fields
 func TestMatchSetIpFields(t *testing.T) {
-	ipSa := net.ParseIP("10.1.1.1")
-	ipDa := net.ParseIP("10.2.1.1")
+	ipSa := net.ParseIP("10.1.1.1").Mask(net.CIDRMask(24, 32))
+	ipDa := net.ParseIP("10.2.1.1").Mask(net.CIDRMask(24, 32))
 	ipAddrMask := net.ParseIP("255.255.255.0")
 	inPortFlow, err := ofActor.inputTable.NewFlow(FlowMatch{
 		Priority:  100,
