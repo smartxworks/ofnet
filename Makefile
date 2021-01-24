@@ -7,7 +7,7 @@ GO_FILES        := $(shell find . -type d -name '.cache' -prune -o -type f -name
 GOPATH          ?= $$(go env GOPATH)
 DOCKER_CACHE    := $(CURDIR)/.cache
 
-all: build
+all: build docker-image
 
 build:
 	$(GO) build ./...
@@ -20,11 +20,11 @@ DOCKER_ENV := \
 	@docker run --rm -u $$(id -u):$$(id -g) \
 		-e "GOCACHE=/tmp/gocache" \
 		-e "GOPATH=/tmp/gopath" \
-		-w /usr/src/github.com/contiv/ofnet \
+		-w /usr/src/github.com/smartxworks/ofnet \
 		-v $(DOCKER_CACHE)/gopath:/tmp/gopath \
 		-v $(DOCKER_CACHE)/gocache:/tmp/gocache \
-		-v $(CURDIR):/usr/src/github.com/contiv/ofnet \
-		contiv/build
+		-v $(CURDIR):/usr/src/github.com/smartxworks/ofnet \
+		ofnet/build
 
 $(DOCKER_CACHE):
 	@mkdir -p $@/gopath
