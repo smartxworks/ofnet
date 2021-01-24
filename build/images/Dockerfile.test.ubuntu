@@ -1,0 +1,21 @@
+FROM ofnet/build
+
+# Install openvswitch-switch
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends sudo openvswitch-switch && \
+    rm -rf /var/cache/apt/* /var/lib/apt/lists/*
+
+# Download deps
+
+RUN mkdir -p $GOPATH/src/ofnet
+
+WORKDIR $GOPATH/src/ofnet
+
+COPY go.mod go.sum ./
+
+RUN go mod download
+
+# Copy codes
+
+COPY . $GOPATH/src/ofnet

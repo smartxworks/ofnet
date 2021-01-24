@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  ovsdb-server:
+    image: ghcr.io/smartxworks/ovs:2.14.0
+    command: ovsdb-server
+    network_mode: "host"
+
+  ovs-vswitchd:
+    image: ghcr.io/smartxworks/ovs:2.14.0
+    command: ["ovs-vswitchd-host"]
+    stop_signal: SIGTERM
+    privileged: true
+    volumes_from:
+      - ovsdb-server
+    network_mode: "host"
+    depends_on:
+      - ovsdb-server

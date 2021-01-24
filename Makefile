@@ -1,28 +1,43 @@
-.PHONY: all build update test start stop host-build host-test
+# go options
+GO              ?= go
+LDFLAGS         :=
+GOFLAGS         :=
+BINDIR          := $(CURDIR)/bin
+GO_FILES        := $(shell find . -type d -name '.cache' -prune -o -type f -name '*.go' -print)
+GOPATH          ?= $$(go env GOPATH)
+DOCKER_CACHE    := $(CURDIR)/.cache
 
-all: build test
+all: build
 
-build: start
-	vagrant ssh node1 -c 'cd /opt/gopath/src/github.com/contiv/ofnet && make host-build'
+build:
+	$(GO) build ./...
 
-update:
-	vagrant box update
+test:
+	$(GO) test -v -timeout 0 ./...
 
-start: update
-	vagrant up
 
-stop:
-	vagrant destroy -f
+DOCKER_ENV := \
+	@docker run --rm -u $$(id -u):$$(id -g) \
+		-e "GOCACHE=/tmp/gocache" \
+		-e "GOPATH=/tmp/gopath" \
+		-w /usr/src/github.com/contiv/ofnet \
+		-v $(DOCKER_CACHE)/gopath:/tmp/gopath \
+		-v $(DOCKER_CACHE)/gocache:/tmp/gocache \
+		-v $(CURDIR):/usr/src/github.com/contiv/ofnet \
+		contiv/build
 
-test: build 
-	vagrant ssh node1 -c 'cd /opt/gopath/src/github.com/contiv/ofnet && make host-test'
+$(DOCKER_CACHE):
+	@mkdir -p $@/gopath
+	@mkdir -p $@/gocache
 
-host-build:
-	./checks "./*.go ./libpkt/ ./ofctrl/ ./ovsdbDriver/ ./ovsSwitch/ ./pqueue/ ./rpcHub/"
-	go get github.com/tools/godep
-	go install ./ ./ofctrl
+docker-image:
+	@docker build -q -f build/images/Dockerfile.build.ubuntu -t ofnet/build .
 
-host-test:
-	PATH=${PATH} sudo -E /usr/local/go/bin/go test -v ./
-	PATH=${PATH} sudo -E /usr/local/go/bin/go test -v ./ofctrl
-	PATH=${PATH} sudo -E /usr/local/go/bin/go test -v ./pqueue
+docker-build: $(DOCKER_CACHE) docker-image
+	$(DOCKER_ENV) make build
+
+docker-test: $(DOCKER_CACHE) docker-image
+	docker-compose \
+		-f deploy/docker-compose/docker-compose.ovs.yaml \
+		-f deploy/docker-compose/docker-compose.test.yaml \
+		up --build --remove-orphans --abort-on-container-exit --exit-code-from test

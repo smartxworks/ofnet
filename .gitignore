@@ -1,3 +1,4 @@
+.cache
 # vagrant
 .vagrant
 cscope*

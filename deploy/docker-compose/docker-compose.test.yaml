@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  test:
+    build:
+      context: $PWD
+      dockerfile: $PWD/build/images/Dockerfile.test.ubuntu
+    image: ofnet/test
+    working_dir: /go/src/ofnet
+    command: make test
+    privileged: true
+    volumes_from:
+      - ovsdb-server
+    network_mode: "host"
+    depends_on:
+      - ovs-vswitchd
