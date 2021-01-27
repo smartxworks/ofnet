@@ -416,7 +416,7 @@ func (self *OfnetBgp) DeleteLocalProtoRoute(pathInfo []*OfnetProtoRouteInfo) err
 
 //monitorBest monitors for route updates/changes form peer
 func (self *OfnetBgp) watch() {
-	w := self.bgpServer.Watch(gobgp.WatchBestPath(), gobgp.WatchPeerState(true))
+	w := self.bgpServer.Watch(gobgp.WatchBestPath(false), gobgp.WatchPeerState(true))
 	for {
 		select {
 		case ev := <-w.Event():
@@ -580,7 +580,7 @@ func (self *OfnetBgp) InspectProto() (interface{}, error) {
 		return nil, nil
 	}
 	// Get Bgp info
-	peers := self.bgpServer.GetNeighbor()
+	peers := self.bgpServer.GetNeighbor("", false)
 	OfnetBgpInspect.Peers = append(OfnetBgpInspect.Peers, peers...)
 
 	if len(OfnetBgpInspect.Peers) == 0 {
@@ -588,7 +588,7 @@ func (self *OfnetBgp) InspectProto() (interface{}, error) {
 	}
 
 	// Get rib info
-	tbl, err := self.bgpServer.GetAdjRib(self.myBgpPeer, bgp.RF_IPv4_UC, true, nil)
+	tbl, _, err := self.bgpServer.GetAdjRib(self.myBgpPeer, bgp.RF_IPv4_UC, true, nil)
 	if err != nil {
 		log.Errorf("Bgp Inspect failed: %v", err)
 		return nil, err

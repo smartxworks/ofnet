@@ -14,7 +14,7 @@ require (
 	github.com/google/gopacket v1.1.18
 	github.com/influxdata/influxdb v1.8.3 // indirect
 	github.com/jainvipin/bitset v1.0.1-0.20150123060543-1f0c6de81a62
-	github.com/osrg/gobgp v0.0.0-20160901022930-c58019018fe0
+	github.com/osrg/gobgp v0.0.0
 	github.com/satori/go.uuid v1.2.0 // indirect
 	github.com/sirupsen/logrus v1.7.0 // indirect
 	github.com/spf13/pflag v1.0.5
@@ -26,3 +26,5 @@ require (
 	google.golang.org/grpc v1.35.0
 	gopkg.in/tomb.v2 v2.0.0-20161208151619-d5d1b5820637 // indirect
 )
+
+replace github.com/osrg/gobgp => github.com/zwtop/gobgp v0.0.0-20210127101833-12edfc1f4514
