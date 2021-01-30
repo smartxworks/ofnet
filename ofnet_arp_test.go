@@ -107,16 +107,15 @@ func verifyGARPstats(numGarpCycles int) bool {
 	return (count == uint64(numGarpCycles*GARPRepeats))
 }
 
-func vlanAddDelEP(epID, epgID int, add bool) error {
+func vlanAddDelEP(epID, vlanID int, add bool) error {
 	macAddr, _ := net.ParseMAC(fmt.Sprintf("02:02:02:%02x:%02x:%02x", epID, epID, epID))
 	ipAddr := net.ParseIP(fmt.Sprintf("10.11.%d.%d", epID, epID))
 	endpoint := EndpointInfo{
-		PortNo:            uint32(NUM_AGENT + epID),
-		MacAddr:           macAddr,
-		Vlan:              uint16(epgID),
-		EndpointGroup:     epgID,
-		EndpointGroupVlan: uint16(epgID),
-		IpAddr:            ipAddr,
+		PortNo:       uint32(NUM_AGENT + epID),
+		MacAddr:      macAddr,
+		Vlan:         uint16(vlanID),
+		EndpointVlan: uint16(vlanID),
+		IpAddr:       ipAddr,
 	}
 
 	if add {
@@ -161,9 +160,9 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 	vlanAddDelEP(6, 6, true)
 	time.Sleep(GARP_EXPIRY_DELAY * time.Second)
 	vlanAddDelEP(7, 6, true)
-	if !verifyGARPstats(4) {
+	if !verifyGARPstats(3) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 4*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 3*GARPRepeats)
 		return
 	}
 
@@ -173,7 +172,7 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 	vlanAgents[0].InjectGARPs(6, &resp)
 	if !verifyGARPstats(5) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 5*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 5*GARPRepeats)
 		return
 	}
 	// ============= Endpoint Add/Del GARP test cases end ============== //
@@ -190,7 +189,7 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 
 	if !verifyGARPstats(7) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 7*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 7*GARPRepeats)
 		return
 	}
 
@@ -201,7 +200,7 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 	setLinkUpDown("vvport300", linkUp)
 	if !verifyGARPstats(7) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 7*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 7*GARPRepeats)
 		return
 	}
 
@@ -214,14 +213,14 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 	setLinkUpDown("vvport300", linkUp)
 	if !verifyGARPstats(9) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 9*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 9*GARPRepeats)
 		return
 	}
 	setLinkUpDown("vvport301", linkUp)
 	setLinkUpDown("vvport302", linkUp)
 	if !verifyGARPstats(9) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 9*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 9*GARPRepeats)
 		return
 	}
 
@@ -243,7 +242,7 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 
 	if !verifyGARPstats(11) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 11*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 11*GARPRepeats)
 		return
 	}
 
@@ -254,7 +253,7 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 	setLinkUpDown(portName, linkUp)
 	if !verifyGARPstats(13) {
 		t.Errorf("GARP stats incorrect count: %v exp: %v",
-			count, 13*GARPRepeats)
+			vlanAgents[0].getStats("GARPSent"), 13*GARPRepeats)
 		return
 	}
 
@@ -272,19 +271,18 @@ func TestOfnetVlanGArpInject(t *testing.T) {
 func addEndpoint(ofa *OfnetAgent, portNo uint32, vlan uint16, macAddrStr, ipAddrStr string) error {
 	macAddr, _ := net.ParseMAC(macAddrStr)
 	endpoint := EndpointInfo{
-		PortNo:            portNo,
-		MacAddr:           macAddr,
-		Vlan:              vlan,
-		EndpointGroup:     0,
-		EndpointGroupVlan: vlan,
-		IpAddr:            net.ParseIP(ipAddrStr),
+		PortNo:       portNo,
+		MacAddr:      macAddr,
+		Vlan:         vlan,
+		EndpointVlan: vlan,
+		IpAddr:       net.ParseIP(ipAddrStr),
 	}
 
 	return ofa.AddLocalEndpoint(endpoint)
 }
 
 // injectArpReq injects an ARP request into ofnet
-func injectArpReq(ofa *OfnetAgent, inPort, vlan int, macSrc, macDst, ipSrc, ipDst string) error {
+func injectArpReq(ofa *OfnetAgent, inPort uint32, vlan int, macSrc, macDst, ipSrc, ipDst string) error {
 	if macDst == "" {
 		macDst = "ff:ff:ff:ff:ff:ff"
 	}
@@ -292,7 +290,7 @@ func injectArpReq(ofa *OfnetAgent, inPort, vlan int, macSrc, macDst, ipSrc, ipDs
 	// inject an ARP request from ep1 for ep2
 	arpReq := openflow13.NewPacketIn()
 	arpReq.Match.Type = openflow13.MatchType_OXM
-	arpReq.Match.AddField(*openflow13.NewInPortField(uint32(inPort)))
+	arpReq.Match.AddField(*openflow13.NewInPortField(inPort))
 	arpReq.Data = *protocol.NewEthernet()
 	arpReq.Data.Ethertype = protocol.ARP_MSG
 	arpReq.Data.HWDst, _ = net.ParseMAC(macDst)
@@ -315,7 +313,7 @@ func injectArpReq(ofa *OfnetAgent, inPort, vlan int, macSrc, macDst, ipSrc, ipDs
 }
 
 // checkArpReqHandling injects ARP requests and checks expected count is incremented
-func checkArpReqHandling(ofa *OfnetAgent, inPort, vlan int, macSrc, macDst, ipSrc, ipDst, expStat string, t *testing.T) {
+func checkArpReqHandling(ofa *OfnetAgent, inPort uint32, vlan int, macSrc, macDst, ipSrc, ipDst, expStat string, t *testing.T) {
 	// get previous count
 	prevCount := ofa.getStats(expStat)
 	log.Debugf("BeforeStats: %+v", ofa.stats)
@@ -342,23 +340,6 @@ func TestVlanProxyArp(t *testing.T) {
 		return
 	}
 
-	// Add two endpoints
-	err = addEndpoint(vlanAgents[0], 1, 1, "02:02:0A:01:01:01", "10.1.1.1")
-	if err != nil {
-		t.Errorf("Error adding endpoint")
-		return
-	}
-	err = addEndpoint(vlanAgents[0], 2, 1, "02:02:0A:01:01:02", "10.1.1.2")
-	if err != nil {
-		t.Errorf("Error adding endpoint")
-		return
-	}
-	err = addEndpoint(vlanAgents[1], 3, 1, "02:02:0A:01:01:03", "10.1.1.3")
-	if err != nil {
-		t.Errorf("Error adding endpoint")
-		return
-	}
-
 	uplinkPort := createPort("uplinkPort")
 	// add an uplink
 	err = addUplink(vlanAgents[0], uplinkPort)
@@ -366,29 +347,50 @@ func TestVlanProxyArp(t *testing.T) {
 		t.Fatalf("Error adding uplink. Err: %v", err)
 	}
 
+	uplinkOfPort := uplinkPort.MbrLinks[0].OfPort
+
+	// Add two endpoints
+	err = addEndpoint(vlanAgents[0], uplinkOfPort+1, 1, "02:02:0A:01:01:01", "10.1.1.1")
+	if err != nil {
+		t.Errorf("Error adding endpoint")
+		return
+	}
+	err = addEndpoint(vlanAgents[0], uplinkOfPort+2, 1, "02:02:0A:01:01:02", "10.1.1.2")
+	if err != nil {
+		t.Errorf("Error adding endpoint")
+		return
+	}
+	err = addEndpoint(vlanAgents[1], uplinkOfPort+3, 1, "02:02:0A:01:01:03", "10.1.1.3")
+	if err != nil {
+		t.Errorf("Error adding endpoint")
+		return
+	}
+
 	// Wait for link up
 	time.Sleep(time.Second)
 
+	ep1Port := uplinkOfPort + 1
+
 	// inject an ARP request from ep1 for ep2
-	checkArpReqHandling(vlanAgents[0], 1, 0, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.2", "ArpReqRespSent", t)
+	checkArpReqHandling(vlanAgents[0], ep1Port, 1, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.2", "ArpReqRespSent", t)
 
 	// inject a unicast ARP request from ep1 for ep2
-	checkArpReqHandling(vlanAgents[0], 1, 0, "02:02:0A:01:01:01", "02:02:0A:01:01:02", "10.1.1.1", "10.1.1.2", "ArpReqRespSent", t)
+	checkArpReqHandling(vlanAgents[0], ep1Port, 1, "02:02:0A:01:01:01", "02:02:0A:01:01:02", "10.1.1.1", "10.1.1.2", "ArpReqRespSent", t)
 
 	// inject ARP req from ep1 to unknown
-	checkArpReqHandling(vlanAgents[0], 1, 0, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.254", "ArpReqReinject", t)
+	checkArpReqHandling(vlanAgents[0], ep1Port, 1, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.254", "ArpReqReinject", t)
 
 	// inject ARP req from uplink to local addr
-	checkArpReqHandling(vlanAgents[0], int(uplinkPort.MbrLinks[0].OfPort), 1, "02:02:0A:01:01:FE", "", "10.1.1.254", "10.1.1.1", "ArpReqRespSent", t)
+	checkArpReqHandling(vlanAgents[0], uplinkOfPort, 1, "02:02:0A:01:01:FE", "", "10.1.1.254", "10.1.1.1", "ArpReqRespSent", t)
 
 	// inject ARP req from uplink to unknown
-	checkArpReqHandling(vlanAgents[0], int(uplinkPort.MbrLinks[0].OfPort), 1, "02:02:0A:01:01:FE", "", "10.1.1.254", "10.1.1.200", "ArpRequestUnknownSrcDst", t)
+	checkArpReqHandling(vlanAgents[0], uplinkOfPort, 1, "02:02:0A:01:01:FE", "", "10.1.1.254", "10.1.1.200", "ArpRequestUnknownSrcDst", t)
 
 	// inject ARP req from uplink to unknown dest with known src
-	checkArpReqHandling(vlanAgents[0], int(uplinkPort.MbrLinks[0].OfPort), 1, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.200", "ArpReqUnknownDestFromUplink", t)
+	checkArpReqHandling(vlanAgents[0], uplinkOfPort, 1, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.200", "ArpReqUnknownDestFromUplink", t)
 
 	// inject ARP req from uplink to non-local dest
-	checkArpReqHandling(vlanAgents[0], int(uplinkPort.MbrLinks[0].OfPort), 1, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.3", "ArpReqNonLocalDestFromUplink", t)
+	checkArpReqHandling(vlanAgents[0], uplinkOfPort, 1, "02:02:0A:01:01:01", "", "10.1.1.1", "10.1.1.3", "ArpReqNonLocalDestFromUplink", t)
 
 	// cleanup uplink
 	err = delUplink(vlanAgents[0], uplinkPort)
@@ -397,11 +399,11 @@ func TestVlanProxyArp(t *testing.T) {
 	}
 
 	// cleanup endpoints
-	err = vlanAgents[0].RemoveLocalEndpoint(1)
+	err = vlanAgents[0].RemoveLocalEndpoint(uplinkOfPort + 1)
 	if err != nil {
 		t.Fatalf("Error deleting endpoint. Err: %v", err)
 	}
-	err = vlanAgents[0].RemoveLocalEndpoint(2)
+	err = vlanAgents[0].RemoveLocalEndpoint(uplinkOfPort + 2)
 	if err != nil {
 		t.Fatalf("Error deleting endpoint. Err: %v", err)
 	}

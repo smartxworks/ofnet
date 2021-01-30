@@ -41,11 +41,10 @@ const (
 func addRemoteEP(oa *OfnetAgent, macByte, vlan uint32, ipAddr string, t *testing.T) {
 	macStr := fmt.Sprintf("00:01:02:03:04:%d", macByte)
 	endpoint := &OfnetEndpoint{
-		EndpointGroup: 100,
-		MacAddrStr:    macStr,
-		Vlan:          uint16(vlan),
-		IpAddr:        net.ParseIP(ipAddr),
-		OriginatorIp:  net.ParseIP("200.1.1.200"),
+		MacAddrStr:   macStr,
+		Vlan:         uint16(vlan),
+		IpAddr:       net.ParseIP(ipAddr),
+		OriginatorIp: net.ParseIP("200.1.1.200"),
 	}
 
 	endpoint.EndpointID = oa.getEndpointIdByIpVlan(endpoint.IpAddr, endpoint.Vlan)
@@ -64,11 +63,10 @@ func addEP(oa *OfnetAgent, portNo uint32, ipAddr string, t *testing.T) {
 	macStr := fmt.Sprintf("00:01:02:03:04:%d", portNo)
 	macAddr, _ := net.ParseMAC(macStr)
 	endpoint := EndpointInfo{
-		EndpointGroup: 100,
-		PortNo:        portNo,
-		MacAddr:       macAddr,
-		Vlan:          1,
-		IpAddr:        net.ParseIP(ipAddr),
+		PortNo:  portNo,
+		MacAddr: macAddr,
+		Vlan:    1,
+		IpAddr:  net.ParseIP(ipAddr),
 	}
 
 	log.Infof("Adding Local endpoint: %+v", endpoint)

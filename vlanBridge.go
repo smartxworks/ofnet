@@ -64,23 +64,18 @@ type VlanBridge struct {
 	uplinkPortDb cmap.ConcurrentMap // Database of uplink ports
 	linkDb       cmap.ConcurrentMap // Database of all links
 	garpMutex    *sync.Mutex
-	epgToEPs     map[int]epgGARPInfo // Database of eps per epg
+	epMap        map[string]GARPInfo
 	garpBGActive bool
 	updChan      chan netlink.LinkUpdate // channel to monitor for link events
 	nlChan       chan struct{}           // channel to close the netlink listener
 }
 
-// epgGARPInfo holds info for epg
-type epgGARPInfo struct {
-	garpCount int                 // number of garps yet to be sent on this epg
-	epMap     map[uint32]GARPInfo // map of eps on this epg
-}
-
 // GARPInfo for each EP
 type GARPInfo struct {
-	ip   net.IP
-	mac  net.HardwareAddr
-	vlan uint16
+	garpCount int
+	ip        net.IP
+	mac       net.HardwareAddr
+	vlan      uint16
 }
 
 // GetUplink API gets the uplink port with uplinkID from uplink DB
@@ -114,7 +109,7 @@ func NewVlanBridge(agent *OfnetAgent, rpcServ *rpc.Server) *VlanBridge {
 	vlan.dscpFlowDb = make(map[uint32][]*ofctrl.Flow)
 	vlan.uplinkPortDb = cmap.New()
 	vlan.linkDb = cmap.New()
-	vlan.epgToEPs = make(map[int]epgGARPInfo)
+	vlan.epMap = make(map[string]GARPInfo)
 	vlan.garpMutex = &sync.Mutex{}
 	vlan.garpBGActive = false
 
@@ -235,26 +230,26 @@ func (vl *VlanBridge) backGroundGARPs() {
 		vl.garpMutex.Lock()
 
 		workDone := false
-		for epgID, epgInfo := range vl.epgToEPs {
-			if epgInfo.garpCount <= 0 {
+		for endpointID, ep := range vl.epMap {
+			if ep.garpCount <= 0 {
 				continue
 			}
 
-			epgInfo.garpCount--
-			for _, ep := range epgInfo.epMap {
-				err := vl.sendGARP(ep.ip, ep.mac, ep.vlan)
-				if err == nil {
-					vl.agent.incrStats("GARPSent")
-				} else {
-					log.Warnf("Send GARP failed for ep IP: %v", ep.ip)
-				}
-				workDone = true
+			ep.garpCount--
+
+			err := vl.sendGARP(ep.ip, ep.mac, ep.vlan)
+			if err == nil {
+				vl.agent.incrStats("GARPSent")
+			} else {
+				log.Warnf("Send GARP failed for ep IP: %v", ep.ip)
 			}
 
-			vl.epgToEPs[epgID] = epgInfo
+			vl.epMap[endpointID] = ep
+
+			workDone = true
 		}
 
-		if !workDone { // No epgs pending. Time to exit
+		if !workDone { // No ep pending. Time to exit
 			vl.garpBGActive = false
 			vl.garpMutex.Unlock()
 			return
@@ -267,17 +262,7 @@ func (vl *VlanBridge) backGroundGARPs() {
 
 // InjectGARPs for all endpoints on the epg
 func (vl *VlanBridge) InjectGARPs(epgID int) {
-	vl.garpMutex.Lock()
-	defer vl.garpMutex.Unlock()
-
-	epgInfo, found := vl.epgToEPs[epgID]
-	if found { // only if this epg has endpoints here
-		epgInfo.garpCount = GARPRepeats
-		vl.epgToEPs[epgID] = epgInfo
-		if !vl.garpBGActive {
-			go vl.backGroundGARPs()
-		}
-	}
+	vl.sendGARPAll()
 }
 
 func (vl *VlanBridge) sendGARPAll() {
@@ -285,14 +270,14 @@ func (vl *VlanBridge) sendGARPAll() {
 	defer vl.garpMutex.Unlock()
 
 	count := 0
-	for epgID, epgInfo := range vl.epgToEPs {
-		epgInfo.garpCount = GARPRepeats
-		vl.epgToEPs[epgID] = epgInfo
+	for epID, ep := range vl.epMap {
+		ep.garpCount = GARPRepeats
+		vl.epMap[epID] = ep
 		count++
 	}
 
 	if !vl.garpBGActive && count > 0 {
-		log.Infof("GARPs will be sent for %d epgs", count)
+		log.Infof("GARPs will be sent for %d eps", count)
 		go vl.backGroundGARPs()
 	}
 }
@@ -351,26 +336,23 @@ func (vl *VlanBridge) AddLocalEndpoint(endpoint OfnetEndpoint) error {
 			endpoint.IpAddr.String(), endpoint.MacAddrStr, endpoint.Vlan, err)
 	}
 
-	// update epgDB
-	if endpoint.EndpointGroupVlan != 0 {
+	// update epDB
+	if endpoint.EndpointVlan != 0 {
 		vl.garpMutex.Lock()
 
-		gInfo := GARPInfo{mac: mac,
-			ip:   endpoint.IpAddr,
-			vlan: endpoint.EndpointGroupVlan}
-		epgInfo, found := vl.epgToEPs[endpoint.EndpointGroup]
-		if !found {
-			epMap := make(map[uint32]GARPInfo)
-			epgInfo = epgGARPInfo{garpCount: 0,
-				epMap: epMap,
-			}
+		ep := GARPInfo{
+			garpCount: GARPRepeats,
+			mac:       mac,
+			ip:        endpoint.IpAddr,
+			vlan:      endpoint.EndpointVlan}
+		vl.epMap[endpoint.EndpointID] = ep
+
+		// inject background arps as well
+		if !vl.garpBGActive {
+			go vl.backGroundGARPs()
 		}
 
-		epgInfo.epMap[endpoint.PortNo] = gInfo
-		vl.epgToEPs[endpoint.EndpointGroup] = epgInfo
-
 		vl.garpMutex.Unlock()
-		vl.InjectGARPs(endpoint.EndpointGroup) // inject background arps as well
 	}
 
 	return nil
@@ -398,13 +380,10 @@ func (vl *VlanBridge) RemoveLocalEndpoint(endpoint OfnetEndpoint) error {
 		}
 	}
 
-	// Remove from epg DB
+	// Remove from ep DB
 	vl.garpMutex.Lock()
 	defer vl.garpMutex.Unlock()
-	epgInfo, found := vl.epgToEPs[endpoint.EndpointGroup]
-	if found {
-		delete(epgInfo.epMap, endpoint.PortNo)
-	}
+	delete(vl.epMap, endpoint.EndpointID)
 
 	vl.svcProxy.DelEndpoint(&endpoint)
 	// Remove the endpoint from policy tables
@@ -1000,7 +979,7 @@ func (vl *VlanBridge) processArp(pkt protocol.Ethernet, inPort uint32) {
 				// ARP request from local container to unknown IP
 				// Reinject ARP to uplinks
 				ethPkt := protocol.NewEthernet()
-				ethPkt.VLANID.VID = srcEp.EndpointGroupVlan
+				ethPkt.VLANID.VID = srcEp.EndpointVlan
 				ethPkt.HWDst = pkt.HWDst
 				ethPkt.HWSrc = pkt.HWSrc
 				ethPkt.Ethertype = 0x0806

@@ -72,11 +72,10 @@ func TestPolicyAddDelete(t *testing.T) {
 
 	macAddr, _ := net.ParseMAC("00:01:02:03:04:05")
 	endpoint := EndpointInfo{
-		EndpointGroup: 100,
-		PortNo:        12,
-		MacAddr:       macAddr,
-		Vlan:          1,
-		IpAddr:        net.ParseIP("10.2.2.2"),
+		PortNo:  12,
+		MacAddr: macAddr,
+		Vlan:    1,
+		IpAddr:  net.ParseIP("10.2.2.2"),
 	}
 
 	log.Infof("Adding Local endpoint: %+v", endpoint)

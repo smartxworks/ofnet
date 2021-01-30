@@ -101,16 +101,15 @@ type OfnetAgent struct {
 
 // local End point information
 type EndpointInfo struct {
-	PortNo            uint32           // OVS port number
-	EndpointGroup     int              // Endpoint group ID
-	MacAddr           net.HardwareAddr // mac address
-	Vlan              uint16           // OVS internal vlan for the network
-	IpAddr            net.IP           // IPv4 address of the endpoint
-	Ipv6Addr          net.IP           // IPv6 address of the endpoint
-	Vrf               string           // VRF name
-	EndpointGroupVlan uint16           // Endpoint group vlan when its different from network vlan
-	Dscp              int              // DSCP value for the endpoint
-	HostPvtIP         net.IP           // IPv4 address for NAT access to host
+	PortNo       uint32           // OVS port number
+	MacAddr      net.HardwareAddr // mac address
+	Vlan         uint16           // OVS internal vlan for the network
+	IpAddr       net.IP           // IPv4 address of the endpoint
+	Ipv6Addr     net.IP           // IPv6 address of the endpoint
+	Vrf          string           // VRF name
+	EndpointVlan uint16           // Endpoint vlan when its different from network vlan
+	Dscp         int              // DSCP value for the endpoint
+	HostPvtIP    net.IP           // IPv4 address for NAT access to host
 }
 
 // HostPortInfo holds information about a host access port
@@ -570,23 +569,22 @@ func (self *OfnetAgent) AddLocalEndpoint(endpoint EndpointInfo) error {
 
 	// Build endpoint registry info
 	epreg := &OfnetEndpoint{
-		EndpointID:        epId,
-		EndpointGroup:     endpoint.EndpointGroup,
-		IpAddr:            endpoint.IpAddr,
-		IpMask:            net.ParseIP("255.255.255.255"),
-		Ipv6Addr:          endpoint.Ipv6Addr,
-		Ipv6Mask:          v6mask,
-		Vrf:               *vrf,
-		MacAddrStr:        endpoint.MacAddr.String(),
-		Vlan:              endpoint.Vlan,
-		Vni:               *vni,
-		OriginatorIp:      self.localIp,
-		OriginatorMac:     self.localMac,
-		PortNo:            endpoint.PortNo,
-		Dscp:              endpoint.Dscp,
-		Timestamp:         time.Now(),
-		EndpointGroupVlan: endpoint.EndpointGroupVlan,
-		HostPvtIP:         endpoint.HostPvtIP,
+		EndpointID:    epId,
+		IpAddr:        endpoint.IpAddr,
+		IpMask:        net.ParseIP("255.255.255.255"),
+		Ipv6Addr:      endpoint.Ipv6Addr,
+		Ipv6Mask:      v6mask,
+		Vrf:           *vrf,
+		MacAddrStr:    endpoint.MacAddr.String(),
+		Vlan:          endpoint.Vlan,
+		Vni:           *vni,
+		OriginatorIp:  self.localIp,
+		OriginatorMac: self.localMac,
+		PortNo:        endpoint.PortNo,
+		Dscp:          endpoint.Dscp,
+		Timestamp:     time.Now(),
+		EndpointVlan:  endpoint.EndpointVlan,
+		HostPvtIP:     endpoint.HostPvtIP,
 	}
 	self.setInternal(epreg)
 
