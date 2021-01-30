@@ -183,14 +183,6 @@ func createPortVlanFlow(agent *OfnetAgent, vlanTable, nextTable *ofctrl.Table, e
 	vrfid := agent.getvrfId(endpoint.Vrf)
 	metadata, metadataMask := Vrfmetadata(*vrfid)
 
-	// set source EPG id if required
-	if endpoint.EndpointGroup != 0 {
-		srcMetadata, srcMetadataMask := SrcGroupMetadata(endpoint.EndpointGroup)
-		metadata = metadata | srcMetadata
-		metadataMask = metadataMask | srcMetadataMask
-
-	}
-
 	// set vlan if required
 	if agent.dpName == "vxlan" {
 		portVlanFlow.SetVlan(endpoint.Vlan)
@@ -241,14 +233,6 @@ func createDscpFlow(agent *OfnetAgent, vlanTable, nextTable *ofctrl.Table, endpo
 	//set vrf id as METADATA
 	vrfid := agent.getvrfId(endpoint.Vrf)
 	metadata, metadataMask := Vrfmetadata(*vrfid)
-
-	// set source EPG id if required
-	if endpoint.EndpointGroup != 0 {
-		srcMetadata, srcMetadataMask := SrcGroupMetadata(endpoint.EndpointGroup)
-		metadata = metadata | srcMetadata
-		metadataMask = metadataMask | srcMetadataMask
-
-	}
 
 	// set vlan if required
 	if agent.dpName == "vxlan" {

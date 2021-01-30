@@ -89,16 +89,14 @@ func TestPolicyAddDelete(t *testing.T) {
 	}
 
 	tcpRule := &OfnetPolicyRule{
-		RuleId:           "tcpRule",
-		Priority:         100,
-		SrcEndpointGroup: 100,
-		DstEndpointGroup: 200,
-		SrcIpAddr:        "10.10.10.0/24",
-		DstIpAddr:        "10.1.1.0/24",
-		IpProtocol:       6,
-		DstPort:          100,
-		SrcPort:          200,
-		Action:           "allow",
+		RuleId:     "tcpRule",
+		Priority:   100,
+		SrcIpAddr:  "10.10.10.0/24",
+		DstIpAddr:  "10.1.1.0/24",
+		IpProtocol: 6,
+		DstPort:    100,
+		SrcPort:    200,
+		Action:     "allow",
 	}
 
 	log.Infof("Adding rule: %+v", tcpRule)
@@ -111,16 +109,14 @@ func TestPolicyAddDelete(t *testing.T) {
 	}
 
 	udpRule := &OfnetPolicyRule{
-		RuleId:           "udpRule",
-		Priority:         100,
-		SrcEndpointGroup: 300,
-		DstEndpointGroup: 400,
-		SrcIpAddr:        "20.20.20.0/24",
-		DstIpAddr:        "20.2.2.0/24",
-		IpProtocol:       17,
-		DstPort:          300,
-		SrcPort:          400,
-		Action:           "deny",
+		RuleId:     "udpRule",
+		Priority:   100,
+		SrcIpAddr:  "20.20.20.0/24",
+		DstIpAddr:  "20.2.2.0/24",
+		IpProtocol: 17,
+		DstPort:    300,
+		SrcPort:    400,
+		Action:     "deny",
 	}
 
 	log.Infof("Adding rule: %+v", udpRule)
@@ -138,25 +134,8 @@ func TestPolicyAddDelete(t *testing.T) {
 		t.Errorf("Error getting flow entries. Err: %v", err)
 		return
 	}
-	// verify src group flow
-	srcGrpFlowMatch := fmt.Sprintf("priority=10,in_port=12 actions=write_metadata:0x100640000/0xff7fff0000")
-	if !ofctlFlowMatch(flowList, VLAN_TBL_ID, srcGrpFlowMatch) {
-		fmt.Printf("Flows:\n%+v", flowList)
-		t.Fatalf("Could not find the flow %s on ovs %s", srcGrpFlowMatch, brName)
-	}
-
-	log.Infof("Found src group %s on ovs %s", srcGrpFlowMatch, brName)
-
-	// verify dst group flow
-	dstGrpFlowMatch := fmt.Sprintf("priority=100,ip,metadata=0x100000000/0xff00000000,nw_dst=10.2.2.2 actions=write_metadata:0xc8/0xfffe")
-	if !ofctlFlowMatch(flowList, DST_GRP_TBL_ID, dstGrpFlowMatch) {
-		t.Fatalf("Could not find the flow %s on ovs %s", dstGrpFlowMatch, brName)
-	}
-
-	log.Infof("Found dst group %s on ovs %s", dstGrpFlowMatch, brName)
-
 	// verify tcp rule flow entry exists
-	tcpFlowMatch := fmt.Sprintf("priority=110,tcp,metadata=0x640190/0x7ffffffe,nw_src=10.10.10.0/24,nw_dst=10.1.1.0/24,tp_src=200,tp_dst=100")
+	tcpFlowMatch := fmt.Sprintf("priority=110,tcp,nw_src=10.10.10.0/24,nw_dst=10.1.1.0/24,tp_src=200,tp_dst=100")
 	if !ofctlFlowMatch(flowList, POLICY_TBL_ID, tcpFlowMatch) {
 		t.Fatalf("Could not find the flow %s on ovs %s", tcpFlowMatch, brName)
 	}
@@ -164,7 +143,7 @@ func TestPolicyAddDelete(t *testing.T) {
 	log.Infof("Found tcp rule %s on ovs %s", tcpFlowMatch, brName)
 
 	// verify udp rule flow
-	udpFlowMatch := fmt.Sprintf("priority=110,udp,metadata=0x12c0320/0x7ffffffe,nw_src=20.20.20.0/24,nw_dst=20.2.2.0/24,tp_src=400,tp_dst=300")
+	udpFlowMatch := fmt.Sprintf("priority=110,udp,nw_src=20.20.20.0/24,nw_dst=20.2.2.0/24,tp_src=400,tp_dst=300")
 	if !ofctlFlowMatch(flowList, POLICY_TBL_ID, udpFlowMatch) {
 		t.Fatalf("Could not find the flow %s on ovs %s", udpFlowMatch, brName)
 	}
@@ -193,13 +172,6 @@ func TestPolicyAddDelete(t *testing.T) {
 		t.Fatalf("Error getting flow entries. Err: %v", err)
 	}
 
-	// Make sure flows are gone
-	if ofctlFlowMatch(flowList, VLAN_TBL_ID, srcGrpFlowMatch) {
-		t.Fatalf("Still found the flow %s on ovs %s", srcGrpFlowMatch, brName)
-	}
-	if ofctlFlowMatch(flowList, DST_GRP_TBL_ID, dstGrpFlowMatch) {
-		t.Fatalf("Still found the flow %s on ovs %s", dstGrpFlowMatch, brName)
-	}
 	if ofctlFlowMatch(flowList, POLICY_TBL_ID, tcpFlowMatch) {
 		t.Fatalf("Still found the flow %s on ovs %s", tcpFlowMatch, brName)
 	}

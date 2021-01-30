@@ -187,17 +187,15 @@ type OfnetEndpoint struct {
 
 // OfnetPolicyRule has security rule to be installed
 type OfnetPolicyRule struct {
-	RuleId           string // Unique identifier for the rule
-	Priority         int    // Priority for the rule (1..100. 100 is highest)
-	SrcEndpointGroup int    // Source endpoint group
-	DstEndpointGroup int    // Destination endpoint group
-	SrcIpAddr        string // source IP addrss and mask
-	DstIpAddr        string // Destination IP address and mask
-	IpProtocol       uint8  // IP protocol number
-	SrcPort          uint16 // Source port
-	DstPort          uint16 // destination port
-	TcpFlags         string // TCP flags to match: syn || syn,ack || ack || syn,!ack || !syn,ack;
-	Action           string // rule action: 'accept' or 'deny'
+	RuleId     string // Unique identifier for the rule
+	Priority   int    // Priority for the rule (1..100. 100 is highest)
+	SrcIpAddr  string // source IP addrss and mask
+	DstIpAddr  string // Destination IP address and mask
+	IpProtocol uint8  // IP protocol number
+	SrcPort    uint16 // Source port
+	DstPort    uint16 // destination port
+	TcpFlags   string // TCP flags to match: syn || syn,ack || ack || syn,!ack || !syn,ack;
+	Action     string // rule action: 'accept' or 'deny'
 }
 
 // OfnetProtoNeighborInfo has bgp neighbor info

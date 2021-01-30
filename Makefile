@@ -7,7 +7,9 @@ GO_FILES        := $(shell find . -type d -name '.cache' -prune -o -type f -name
 GOPATH          ?= $$(go env GOPATH)
 DOCKER_CACHE    := $(CURDIR)/.cache
 
-all: build docker-image
+.PHONY: all build
+
+all: build
 
 build:
 	$(GO) build ./...
