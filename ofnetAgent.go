@@ -40,6 +40,14 @@ import (
 	cmap "github.com/streamrail/concurrent-map"
 )
 
+type OVSPort string
+type EndPointInfo struct {
+	OvsPort OVSPort
+	OfPort  uint32
+	IpAddr  net.IP
+	MacAddr net.HardwareAddr
+}
+
 // OfnetAgent state
 type OfnetAgent struct {
 	ctrler      *ofctrl.Controller // Controller instance
@@ -97,6 +105,9 @@ type OfnetAgent struct {
 	errStats   map[string]uint64 // error stats
 	statsMutex sync.Mutex        // Sync mutext for modifying stats
 	nameServer NameServer        // DNS lookup
+
+	localEndpointInfo map[uint32]*EndPointInfo
+	// All endpointDb, TODO
 }
 
 // local End point information
@@ -138,10 +149,19 @@ const (
 	SRV_PROXY_DNAT_TBL_ID = 3
 	DST_GRP_TBL_ID        = 4
 	POLICY_TBL_ID         = 5
-	SRV_PROXY_SNAT_TBL_ID = 6
-	IP_TBL_ID             = 7
-	HOST_SNAT_TBL_ID      = 8
-	MAC_DEST_TBL_ID       = 9
+	TIER0_TBL_ID          = 6
+	TIER1_TBL_ID          = 7
+	TIER2_TBL_ID          = 8
+	EGRESS_TIER0_TBL_ID   = 10
+	EGRESS_TIER1_TBL_ID   = 11
+	EGRESS_TIER2_TBL_ID   = 12
+	INGRESS_TIER0_TBL_ID  = 20
+	INGRESS_TIER1_TBL_ID  = 21
+	INGRESS_TIER2_TBL_ID  = 22
+	SRV_PROXY_SNAT_TBL_ID = 30
+	IP_TBL_ID             = 31
+	HOST_SNAT_TBL_ID      = 32
+	MAC_DEST_TBL_ID       = 33
 )
 
 // Create a new Ofnet agent and initialize it
@@ -187,6 +207,7 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 
 	// Create an openflow controller
 	agent.ctrler = ofctrl.NewController(agent)
+	agent.localEndpointInfo = make(map[uint32]*EndPointInfo)
 
 	// FIXME: Figure out how to handle multiple OVS bridges.
 	rpcServ, listener := rpcHub.NewRpcServer(rpcPort)
@@ -207,6 +228,9 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 		agent.fwdMode = "bridge"
 	case "vlan":
 		agent.datapath = NewVlanBridge(agent, rpcServ)
+		agent.fwdMode = "bridge"
+	case "vlanArpLearner":
+		agent.datapath = NewVlanArpLearnerBridge(agent)
 		agent.fwdMode = "bridge"
 	case "vlrouter":
 		agent.datapath = NewVlrouter(agent, rpcServ)

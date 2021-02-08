@@ -886,7 +886,7 @@ func (vl *Vlrouter) initFgraph() error {
 	}
 
 	// Matches in DNAT go to Policy
-	vl.svcProxy.InitDNATTable(DST_GRP_TBL_ID)
+	vl.svcProxy.InitDNATTable(TIER0_TBL_ID)
 
 	//Create all drop entries
 	// Drop mcast source mac

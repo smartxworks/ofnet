@@ -753,7 +753,7 @@ func (vl *VlanBridge) initFgraph() error {
 	}
 
 	// Matches in DNAT go to Policy
-	vl.svcProxy.InitDNATTable(DST_GRP_TBL_ID)
+	vl.svcProxy.InitDNATTable(TIER0_TBL_ID)
 
 	// Send all packets to vlan lookup
 	validPktFlow, _ := vl.inputTable.NewFlow(ofctrl.FlowMatch{
@@ -765,8 +765,8 @@ func (vl *VlanBridge) initFgraph() error {
 	vlanMissFlow, _ := vl.vlanTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	dstGrpTbl := vl.ofSwitch.GetTable(DST_GRP_TBL_ID)
-	vlanMissFlow.Next(dstGrpTbl)
+	policyTable := vl.ofSwitch.GetTable(TIER0_TBL_ID)
+	vlanMissFlow.Next(policyTable)
 
 	// if arp-mode is ArpProxy, redirect ARP packets to controller
 	// In ArpFlood mode, ARP packets are flooded in datapath and

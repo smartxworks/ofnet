@@ -933,7 +933,7 @@ func (self *Vxlan) initFgraph() error {
 	}
 
 	// Next table for DNAT is Policy
-	self.svcProxy.InitDNATTable(DST_GRP_TBL_ID)
+	self.svcProxy.InitDNATTable(TIER0_TBL_ID)
 
 	//Create all drop entries
 	// Drop mcast source mac

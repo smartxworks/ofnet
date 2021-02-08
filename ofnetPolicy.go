@@ -39,10 +39,13 @@ type PolicyRule struct {
 
 // PolicyAgent is an instance of a policy agent
 type PolicyAgent struct {
-	agent       *OfnetAgent             // Pointer back to ofnet agent that owns this
-	ofSwitch    *ofctrl.OFSwitch        // openflow switch we are talking to
-	dstGrpTable *ofctrl.Table           // dest group lookup table
-	policyTable *ofctrl.Table           // Policy rule lookup table
+	agent       *OfnetAgent      // Pointer back to ofnet agent that owns this
+	ofSwitch    *ofctrl.OFSwitch // openflow switch we are talking to
+	dstGrpTable *ofctrl.Table    // dest group lookup table
+	policyTable *ofctrl.Table    // Policy rule lookup table
+	tier0Table  *ofctrl.Table
+	tier1Table  *ofctrl.Table
+	tier2Table  *ofctrl.Table
 	nextTable   *ofctrl.Table           // Next table to goto for accepted packets
 	Rules       map[string]*PolicyRule  // rules database
 	dstGrpFlow  map[string]*ofctrl.Flow // FLow entries for dst group lookup
@@ -59,7 +62,9 @@ func NewPolicyAgent(agent *OfnetAgent, rpcServ *rpc.Server) *PolicyAgent {
 	policyAgent.dstGrpFlow = make(map[string]*ofctrl.Flow)
 
 	// Register for Master add/remove events
-	rpcServ.Register(policyAgent)
+	if rpcServ != nil {
+		rpcServ.Register(policyAgent)
+	}
 
 	// done
 	return policyAgent
@@ -177,7 +182,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 		flagMaskPtr = &flagMask
 	}
 	// Install the rule in policy table
-	ruleFlow, err := self.policyTable.NewFlow(ofctrl.FlowMatch{
+	ruleFlow, err := self.tier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority:     uint16(FLOW_POLICY_PRIORITY_OFFSET + rule.Priority),
 		Ethertype:    0x0800,
 		IpDa:         ipDa,
@@ -264,20 +269,24 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	self.nextTable = nextTbl
 
 	// Create all tables
-	self.dstGrpTable, _ = sw.NewTable(DST_GRP_TBL_ID)
-	self.policyTable, _ = sw.NewTable(POLICY_TBL_ID)
+	self.tier0Table, _ = sw.NewTable(TIER0_TBL_ID)
+	self.tier1Table, _ = sw.NewTable(TIER1_TBL_ID)
+	self.tier2Table, _ = sw.NewTable(TIER2_TBL_ID)
 
-	// Packets that miss dest group lookup still go to policy table
-	validPktFlow, _ := self.dstGrpTable.NewFlow(ofctrl.FlowMatch{
+	tier0DefaultFlow, _ := self.tier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	validPktFlow.Next(self.policyTable)
+	tier0DefaultFlow.Next(self.tier1Table)
 
-	// Packets that didnt match any rule go to next table
-	vlanMissFlow, _ := self.policyTable.NewFlow(ofctrl.FlowMatch{
+	tier1DefaultFlow, _ := self.tier1Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	vlanMissFlow.Next(nextTbl)
+	tier1DefaultFlow.Next(self.tier2Table)
+
+	tier2DefaultFlow, _ := self.tier2Table.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	tier2DefaultFlow.Next(nextTbl)
 
 	return nil
 }
