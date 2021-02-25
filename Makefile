@@ -14,12 +14,6 @@ all: build
 build:
 	$(GO) build ./...
 
-lynx:
-	$(GO) build -gcflags="all=-N -L" -o $(BINDIR)/lynxPlugin ./cmd/lynxPlugin/lynxPlugin.go
-
-ofnet:
-	$(GO) build -gcflags="all=-N -L" -o $(BINDIR)/ofnetPlugin ./cmd/ofnetPlugin/ofnetPlugin.go
-
 vet:
 	$(GO) vet ./...
 

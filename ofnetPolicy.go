@@ -39,17 +39,15 @@ type PolicyRule struct {
 
 // PolicyAgent is an instance of a policy agent
 type PolicyAgent struct {
-	agent       *OfnetAgent      // Pointer back to ofnet agent that owns this
-	ofSwitch    *ofctrl.OFSwitch // openflow switch we are talking to
-	dstGrpTable *ofctrl.Table    // dest group lookup table
-	policyTable *ofctrl.Table    // Policy rule lookup table
-	tier0Table  *ofctrl.Table
-	tier1Table  *ofctrl.Table
-	tier2Table  *ofctrl.Table
-	nextTable   *ofctrl.Table           // Next table to goto for accepted packets
-	Rules       map[string]*PolicyRule  // rules database
-	dstGrpFlow  map[string]*ofctrl.Flow // FLow entries for dst group lookup
-	mutex       sync.RWMutex
+	agent      *OfnetAgent      // Pointer back to ofnet agent that owns this
+	ofSwitch   *ofctrl.OFSwitch // openflow switch we are talking to
+	tier0Table *ofctrl.Table
+	tier1Table *ofctrl.Table
+	tier2Table *ofctrl.Table
+	nextTable  *ofctrl.Table           // Next table to goto for accepted packets
+	Rules      map[string]*PolicyRule  // rules database
+	dstGrpFlow map[string]*ofctrl.Flow // FLow entries for dst group lookup
+	mutex      sync.RWMutex
 }
 
 // NewPolicyMgr Creates a new policy manager
@@ -104,8 +102,26 @@ func (self *PolicyAgent) DelIpv6Endpoint(endpoint *OfnetEndpoint) error {
 	return nil
 }
 
-// AddRule adds a security rule to policy table
-func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
+func (self *PolicyAgent) GetTierTable(tier uint8) (*ofctrl.Table, *ofctrl.Table, error) {
+	var policyTable, nextTable *ofctrl.Table
+	switch tier {
+	case POLICY_TIER0:
+		policyTable = self.tier0Table
+		nextTable = self.nextTable
+	case POLICY_TIER1:
+		policyTable = self.tier1Table
+		nextTable = self.tier1Table
+	case POLICY_TIER2:
+		policyTable = self.tier2Table
+		nextTable = self.nextTable
+	default:
+		return nil, nil, errors.New("unknow policy tier")
+	}
+
+	return policyTable, nextTable, nil
+}
+
+func (self *PolicyAgent) AddRuleToTier(rule *OfnetPolicyRule, tier uint8) error {
 	var ipDa *net.IP = nil
 	var ipDaMask *net.IP = nil
 	var ipSa *net.IP = nil
@@ -114,6 +130,13 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 	var flagPtr, flagMaskPtr *uint16
 	var err error
 
+	// Different tier have different nextTable select strategy:
+	policyTable, nextTable, e := self.GetTierTable(tier)
+	if e != nil {
+		log.Errorf("error when get policy table tier %v", tier)
+		return errors.New("failed get policy table")
+	}
+
 	// make sure switch is connected
 	if !self.agent.IsSwitchConnected() {
 		self.agent.WaitForSwitchConnection()
@@ -121,7 +144,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 
 	// check if we already have the rule
 	self.mutex.RLock()
-	if self.Rules[rule.RuleId] != nil {
+	if _, ok := self.Rules[rule.RuleId]; ok {
 		oldRule := self.Rules[rule.RuleId].Rule
 
 		if ruleIsSame(oldRule, rule) {
@@ -182,7 +205,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 		flagMaskPtr = &flagMask
 	}
 	// Install the rule in policy table
-	ruleFlow, err := self.tier0Table.NewFlow(ofctrl.FlowMatch{
+	ruleFlow, err := policyTable.NewFlow(ofctrl.FlowMatch{
 		Priority:     uint16(FLOW_POLICY_PRIORITY_OFFSET + rule.Priority),
 		Ethertype:    0x0800,
 		IpDa:         ipDa,
@@ -204,7 +227,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 
 	// Point it to next table
 	if rule.Action == "allow" {
-		err = ruleFlow.Next(self.nextTable)
+		err = ruleFlow.Next(nextTable)
 		if err != nil {
 			log.Errorf("Error installing flow {%+v}. Err: %v", ruleFlow, err)
 			return err
@@ -230,6 +253,11 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 	self.mutex.Unlock()
 
 	return nil
+}
+
+// AddRule adds a security rule to policy table
+func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
+	return self.AddRuleToTier(rule, POLICY_TIER0)
 }
 
 // DelRule deletes a security rule from policy table
@@ -269,24 +297,24 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	self.nextTable = nextTbl
 
 	// Create all tables
-	self.tier0Table, _ = sw.NewTable(TIER0_TBL_ID)
-	self.tier1Table, _ = sw.NewTable(TIER1_TBL_ID)
-	self.tier2Table, _ = sw.NewTable(TIER2_TBL_ID)
+	self.tier0Table, _ = sw.NewTable(POLICY_TIER0_TBL_ID)
+	self.tier1Table, _ = sw.NewTable(POLICY_TIER1_TBL_ID)
+	self.tier2Table, _ = sw.NewTable(POLICY_TIER2_TBL_ID)
 
 	tier0DefaultFlow, _ := self.tier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	tier0DefaultFlow.Next(self.tier1Table)
+	tier0DefaultFlow.Next(self.ofSwitch.DropAction())
 
 	tier1DefaultFlow, _ := self.tier1Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	tier1DefaultFlow.Next(self.tier2Table)
+	tier1DefaultFlow.Next(self.ofSwitch.DropAction())
 
 	tier2DefaultFlow, _ := self.tier2Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	tier2DefaultFlow.Next(nextTbl)
+	tier2DefaultFlow.Next(self.ofSwitch.DropAction())
 
 	return nil
 }

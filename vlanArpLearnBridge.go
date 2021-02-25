@@ -8,6 +8,7 @@ import (
 	"github.com/contiv/libOpenflow/openflow13"
 	"github.com/contiv/libOpenflow/protocol"
 	"github.com/contiv/ofnet/ofctrl"
+	cmap "github.com/streamrail/concurrent-map"
 )
 
 type VlanArpLearnerBridge struct {
@@ -17,18 +18,19 @@ type VlanArpLearnerBridge struct {
 	inputTable           *ofctrl.Table
 	vlanTable            *ofctrl.Table
 	nmlTable             *ofctrl.Table
-	uplinkPort           map[uint32]OVSPort
 	localArpRedirectFlow *ofctrl.Flow
-	uplinkArpFlow        []*ofctrl.Flow
+	fromUplinkFlow       map[uint32]*ofctrl.Flow
+	uplinkPortDb         cmap.ConcurrentMap
 
-	lynxPolicyAgent *PolicyAgent
+	policyAgent *PolicyAgent
 }
 
 func NewVlanArpLearnerBridge(agent *OfnetAgent) *VlanArpLearnerBridge {
 	vlanArpLearner := new(VlanArpLearnerBridge)
 	vlanArpLearner.agent = agent
-	vlanArpLearner.uplinkPort = make(map[uint32]OVSPort)
-	vlanArpLearner.lynxPolicyAgent = NewPolicyAgent(agent, nil)
+	vlanArpLearner.fromUplinkFlow = make(map[uint32]*ofctrl.Flow)
+	vlanArpLearner.uplinkPortDb = cmap.New()
+	vlanArpLearner.policyAgent = NewPolicyAgent(agent, nil)
 
 	return vlanArpLearner
 }
@@ -50,46 +52,36 @@ func (self *VlanArpLearnerBridge) setArpRedirectFlow() error {
 	return nil
 }
 
-func (self *VlanArpLearnerBridge) setUplinkArpFlow(ofPort uint32) error {
-	// Uplink port originated arp, normal
-	uplinkArpFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+func (self *VlanArpLearnerBridge) setUpFromUplinkFlow(ofPort uint32) error {
+	// Add uplink port redirect flow: redirect to normalLookupFlow.
+	fromUplinkFlow, err := self.vlanTable.NewFlow(ofctrl.FlowMatch{
 		Priority:  FLOW_MATCH_PRIORITY + 1,
-		Ethertype: 0x0806,
 		InputPort: ofPort,
 	})
 	if err != nil {
-		log.Errorf("Error when add uplink arp flow")
+		log.Errorf("Error when create vlanTable fromUplinkFlow. Err: %v", err)
 		return err
 	}
-	uplinkArpFlow.Next(self.nmlTable)
-	self.uplinkArpFlow = append(self.uplinkArpFlow, uplinkArpFlow)
+	normalLookupTable := self.ofSwitch.GetTable(MAC_DEST_TBL_ID)
+	err = fromUplinkFlow.Next(normalLookupTable)
+	if err != nil {
+		log.Errorf("Error when create vlanTable fromUplinkFlow nextTable action. Err: %v", err)
+		return err
+	}
+	self.fromUplinkFlow[ofPort] = fromUplinkFlow
+
 	return nil
 }
 
 func (self *VlanArpLearnerBridge) AddUplink(uplinkPort *PortInfo) error {
+	var err error
 	for _, link := range uplinkPort.MbrLinks {
-		err := self.setUplinkArpFlow(link.OfPort)
+		err = self.setUpFromUplinkFlow(link.OfPort)
 		if err != nil {
-			return err
-		}
-		// Add uplink port redirect flow: redirect to normalLookupFlow.
-		fromUplinkFlow, err := self.vlanTable.NewFlow(ofctrl.FlowMatch{
-			Priority:  FLOW_MATCH_PRIORITY,
-			InputPort: link.OfPort,
-		})
-		if err != nil {
-			log.Errorf("Error when create vlanTable fromUplinkFlow. Err: %v", err)
-			return err
-		}
-		normalLookupTable := self.ofSwitch.GetTable(MAC_DEST_TBL_ID)
-		err = fromUplinkFlow.Next(normalLookupTable)
-		if err != nil {
-			log.Errorf("Error when create vlanTable fromUplinkFlow nextTable action. Err: %v", err)
 			return err
 		}
 	}
-
-	// TODO Cached uplink related flow
+	self.uplinkPortDb.Set(uplinkPort.Name, uplinkPort)
 
 	return nil
 }
@@ -99,7 +91,29 @@ func (self *VlanArpLearnerBridge) UpdateUplink(uplinkName string, update PortUpd
 }
 
 func (self *VlanArpLearnerBridge) RemoveUplink(uplinkName string) error {
+	uplinkPort := self.GetUplink(uplinkName)
+	if uplinkPort == nil {
+		err := fmt.Errorf("Could not get uplink with name: %s", uplinkName)
+		return err
+	}
+
+	for _, link := range uplinkPort.MbrLinks {
+		if fromUplinkFlow, ok := self.fromUplinkFlow[link.OfPort]; ok {
+			fromUplinkFlow.Delete()
+			delete(self.fromUplinkFlow, link.OfPort)
+		}
+	}
+	self.uplinkPortDb.Remove(uplinkName)
+
 	return nil
+}
+
+func (self *VlanArpLearnerBridge) GetUplink(uplinkID string) *PortInfo {
+	uplink, ok := self.uplinkPortDb.Get(uplinkID)
+	if !ok {
+		return nil
+	}
+	return uplink.(*PortInfo)
 }
 
 func (self *VlanArpLearnerBridge) initFgraph() error {
@@ -109,7 +123,7 @@ func (self *VlanArpLearnerBridge) initFgraph() error {
 	self.vlanTable, _ = sw.NewTable(VLAN_TBL_ID)
 	self.nmlTable, _ = sw.NewTable(MAC_DEST_TBL_ID)
 
-	err := self.lynxPolicyAgent.InitTables(MAC_DEST_TBL_ID)
+	err := self.policyAgent.InitTables(MAC_DEST_TBL_ID)
 	if err != nil {
 		log.Fatalf("Error when installing Policy table. Err: %v", err)
 		return err
@@ -120,17 +134,20 @@ func (self *VlanArpLearnerBridge) initFgraph() error {
 	})
 	inputMissFlow.Next(self.vlanTable)
 
-	tier0PolicyTable := sw.GetTable(TIER0_TBL_ID)
+	tier0PolicyTable := sw.GetTable(POLICY_TIER0_TBL_ID)
 	vlanMissFlow, _ := self.vlanTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
 	vlanMissFlow.Next(tier0PolicyTable)
 
 	self.setArpRedirectFlow()
-	// TODO Get uplink ofport list and init uplinkArpFlow, for restore
-	if len(self.uplinkPort) > 0 {
-		for ofPort, _ := range self.uplinkPort {
-			self.setUplinkArpFlow(ofPort)
+
+	if self.uplinkPortDb.Count() != 0 {
+		for uplinkObj := range self.uplinkPortDb.IterBuffered() {
+			uplink := uplinkObj.Val.(*PortInfo)
+			for _, link := range uplink.MbrLinks {
+				self.setUpFromUplinkFlow(link.OfPort)
+			}
 		}
 	}
 
@@ -145,12 +162,12 @@ func (self *VlanArpLearnerBridge) initFgraph() error {
 // Controller appinterface: SwitchConnected, SwichDisConnected, MultipartReply, PacketRcvd
 func (self *VlanArpLearnerBridge) SwitchConnected(sw *ofctrl.OFSwitch) {
 	self.ofSwitch = sw
-	self.lynxPolicyAgent.SwitchConnected(sw)
+	self.policyAgent.SwitchConnected(sw)
 	self.initFgraph()
 }
 
 func (self *VlanArpLearnerBridge) SwitchDisconnected(sw *ofctrl.OFSwitch) {
-	self.lynxPolicyAgent.SwitchDisconnected(sw)
+	self.policyAgent.SwitchDisconnected(sw)
 	self.ofSwitch = nil
 }
 
@@ -173,6 +190,8 @@ func (self *VlanArpLearnerBridge) PacketRcvd(sw *ofctrl.OFSwitch, pkt *ofctrl.Pa
 			}
 		}
 	case protocol.IPv4_MSG: // other type of packet that must processing by controller
+		log.Errorf("controller received non arp packet error.")
+		return
 	}
 }
 
@@ -181,7 +200,6 @@ func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint3
 	switch t := pkt.Data.(type) {
 	case *protocol.ARP:
 		var arpIn protocol.ARP = *t
-		// TODO process RARP arp.opcode = 3
 
 		// Reinject garp packet
 		if arpIn.IPSrc.String() == arpIn.IPDst.String() {
@@ -206,13 +224,16 @@ func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint3
 }
 
 func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32) {
-	endpointInfo := &EndPointInfo{
+	updatedOfPortInfo := make(map[uint32][]net.IP)
+	updatedOfPortInfo[inPort] = []net.IP{arpIn.IPSrc}
+	self.agent.ofPortIpAddressUpdateChan <- updatedOfPortInfo
+
+	endpointInfo := &endpointInfo{
 		OfPort:  inPort,
 		IpAddr:  arpIn.IPSrc,
 		MacAddr: arpIn.HWSrc,
 	}
 	self.agent.localEndpointInfo[inPort] = endpointInfo
-	fmt.Printf("Learned endpoint info: %v", endpointInfo)
 }
 
 func (self *VlanArpLearnerBridge) arpNoraml(pkt protocol.Ethernet, inPort uint32) {
@@ -346,4 +367,7 @@ func GetUplinkPort(portName string, ofPort uint32, portType string) *PortInfo {
 	}
 
 	return &port
+}
+func (self *VlanArpLearnerBridge) GetPolicyAgent() *PolicyAgent {
+	return self.policyAgent
 }

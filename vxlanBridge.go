@@ -933,7 +933,7 @@ func (self *Vxlan) initFgraph() error {
 	}
 
 	// Next table for DNAT is Policy
-	self.svcProxy.InitDNATTable(TIER0_TBL_ID)
+	self.svcProxy.InitDNATTable(POLICY_TIER0_TBL_ID)
 
 	//Create all drop entries
 	// Drop mcast source mac
@@ -1259,4 +1259,8 @@ func (self *Vxlan) sendGARP(ip net.IP, mac net.HardwareAddr, vni uint64) error {
 
 //FlushEndpoints flushes endpoints from ovs
 func (self *Vxlan) FlushEndpoints(endpointType int) {
+}
+
+func (self *Vxlan) GetPolicyAgent() *PolicyAgent {
+	return self.policyAgent
 }

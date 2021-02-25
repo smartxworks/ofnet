@@ -753,7 +753,7 @@ func (vl *VlanBridge) initFgraph() error {
 	}
 
 	// Matches in DNAT go to Policy
-	vl.svcProxy.InitDNATTable(TIER0_TBL_ID)
+	vl.svcProxy.InitDNATTable(POLICY_TIER0_TBL_ID)
 
 	// Send all packets to vlan lookup
 	validPktFlow, _ := vl.inputTable.NewFlow(ofctrl.FlowMatch{
@@ -765,7 +765,7 @@ func (vl *VlanBridge) initFgraph() error {
 	vlanMissFlow, _ := vl.vlanTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	policyTable := vl.ofSwitch.GetTable(TIER0_TBL_ID)
+	policyTable := vl.ofSwitch.GetTable(POLICY_TIER0_TBL_ID)
 	vlanMissFlow.Next(policyTable)
 
 	// if arp-mode is ArpProxy, redirect ARP packets to controller
@@ -1076,4 +1076,8 @@ func (vl *VlanBridge) listLinks() []string {
 
 //FlushEndpoints flushes endpoints from ovs
 func (vl *VlanBridge) FlushEndpoints(endpointType int) {
+}
+
+func (vl *VlanBridge) GetPolicyAgent() *PolicyAgent {
+	return vl.policyAgent
 }

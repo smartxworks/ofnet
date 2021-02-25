@@ -41,10 +41,11 @@ import (
 )
 
 type OVSPort string
-type EndPointInfo struct {
-	OvsPort OVSPort
+type endpointInfo struct {
+	OVSPort OVSPort
 	OfPort  uint32
 	IpAddr  net.IP
+	Ip6Addr net.IP
 	MacAddr net.HardwareAddr
 }
 
@@ -106,8 +107,8 @@ type OfnetAgent struct {
 	statsMutex sync.Mutex        // Sync mutext for modifying stats
 	nameServer NameServer        // DNS lookup
 
-	localEndpointInfo map[uint32]*EndPointInfo
-	// All endpointDb, TODO
+	localEndpointInfo         map[uint32]*endpointInfo
+	ofPortIpAddressUpdateChan chan map[uint32][]net.IP
 }
 
 // local End point information
@@ -147,11 +148,11 @@ const (
 	VLAN_TBL_ID           = 1
 	HOST_DNAT_TBL_ID      = 2
 	SRV_PROXY_DNAT_TBL_ID = 3
-	DST_GRP_TBL_ID        = 4
-	POLICY_TBL_ID         = 5
-	TIER0_TBL_ID          = 6
-	TIER1_TBL_ID          = 7
-	TIER2_TBL_ID          = 8
+	DST_GRP_TBL_ID        = POLICY_TIER0_TBL_ID
+	POLICY_TBL_ID         = POLICY_TIER0_TBL_ID
+	POLICY_TIER0_TBL_ID   = 6
+	POLICY_TIER1_TBL_ID   = 7
+	POLICY_TIER2_TBL_ID   = 8
 	EGRESS_TIER0_TBL_ID   = 10
 	EGRESS_TIER1_TBL_ID   = 11
 	EGRESS_TIER2_TBL_ID   = 12
@@ -164,9 +165,15 @@ const (
 	MAC_DEST_TBL_ID       = 33
 )
 
+const (
+	POLICY_TIER0 = 0
+	POLICY_TIER1 = 1
+	POLICY_TIER2 = 2
+)
+
 // Create a new Ofnet agent and initialize it
 func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uint16,
-	ovsPort uint16, uplinkInfo []string) (*OfnetAgent, error) {
+	ovsPort uint16, uplinkInfo []string, ofPortIpAddressUpdateChan chan map[uint32][]net.IP) (*OfnetAgent, error) {
 	log.Infof("Creating new ofnet agent for %s,%s,%d,%d,%d\n", bridgeName, dpName, localIp, rpcPort, ovsPort)
 	agent := new(OfnetAgent)
 
@@ -207,7 +214,7 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 
 	// Create an openflow controller
 	agent.ctrler = ofctrl.NewController(agent)
-	agent.localEndpointInfo = make(map[uint32]*EndPointInfo)
+	agent.ofPortIpAddressUpdateChan = ofPortIpAddressUpdateChan
 
 	// FIXME: Figure out how to handle multiple OVS bridges.
 	rpcServ, listener := rpcHub.NewRpcServer(rpcPort)
@@ -1365,4 +1372,8 @@ func (self *OfnetAgent) unsetInternalBgp(endpoint *OfnetEndpoint) {
 
 func (self *OfnetAgent) FlushEndpoints(endpointType int) {
 	self.datapath.FlushEndpoints(endpointType)
+}
+
+func (self *OfnetAgent) GetDatapath() OfnetDatapath {
+	return self.datapath
 }

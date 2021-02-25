@@ -27,4 +27,7 @@ require (
 	gopkg.in/tomb.v2 v2.0.0-20161208151619-d5d1b5820637 // indirect
 )
 
-replace github.com/osrg/gobgp => github.com/zwtop/gobgp v0.0.0-20210127101833-12edfc1f4514
+replace (
+	github.com/osrg/gobgp => github.com/zwtop/gobgp v0.0.0-20210127101833-12edfc1f4514
+	github.com/contiv/libOpenflow v0.0.0-20200107061746-e3817550c83b => github.com/echkenluo/libOpenflow v0.0.0-20210303025312-9765e623c87e
+)

@@ -29,7 +29,7 @@ func TestPolicyAddDelete(t *testing.T) {
 	rpcPort := uint16(9600)
 	ovsPort := uint16(9601)
 	lclIP := net.ParseIP("10.10.10.10")
-	ofnetAgent, err := NewOfnetAgent("", "vrouter", lclIP, rpcPort, ovsPort, nil)
+	ofnetAgent, err := NewOfnetAgent("", "vrouter", lclIP, rpcPort, ovsPort, nil, nil)
 	if err != nil {
 		t.Fatalf("Error creating ofnet agent. Err: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestPolicyAddDelete(t *testing.T) {
 	}
 	// verify tcp rule flow entry exists
 	tcpFlowMatch := fmt.Sprintf("priority=110,tcp,nw_src=10.10.10.0/24,nw_dst=10.1.1.0/24,tp_src=200,tp_dst=100")
-	if !ofctlFlowMatch(flowList, POLICY_TBL_ID, tcpFlowMatch) {
+	if !ofctlFlowMatch(flowList, POLICY_TIER0_TBL_ID, tcpFlowMatch) {
 		t.Fatalf("Could not find the flow %s on ovs %s", tcpFlowMatch, brName)
 	}
 
@@ -143,7 +143,7 @@ func TestPolicyAddDelete(t *testing.T) {
 
 	// verify udp rule flow
 	udpFlowMatch := fmt.Sprintf("priority=110,udp,nw_src=20.20.20.0/24,nw_dst=20.2.2.0/24,tp_src=400,tp_dst=300")
-	if !ofctlFlowMatch(flowList, POLICY_TBL_ID, udpFlowMatch) {
+	if !ofctlFlowMatch(flowList, POLICY_TIER0_TBL_ID, udpFlowMatch) {
 		t.Fatalf("Could not find the flow %s on ovs %s", udpFlowMatch, brName)
 	}
 
@@ -171,10 +171,10 @@ func TestPolicyAddDelete(t *testing.T) {
 		t.Fatalf("Error getting flow entries. Err: %v", err)
 	}
 
-	if ofctlFlowMatch(flowList, POLICY_TBL_ID, tcpFlowMatch) {
+	if ofctlFlowMatch(flowList, POLICY_TIER0_TBL_ID, tcpFlowMatch) {
 		t.Fatalf("Still found the flow %s on ovs %s", tcpFlowMatch, brName)
 	}
-	if ofctlFlowMatch(flowList, POLICY_TBL_ID, udpFlowMatch) {
+	if ofctlFlowMatch(flowList, POLICY_TIER0_TBL_ID, udpFlowMatch) {
 		t.Fatalf("Still found the flow %s on ovs %s", udpFlowMatch, brName)
 	}
 

@@ -1147,7 +1147,7 @@ func (self *Vrouter) initFgraph() error {
 	}
 
 	// Matches in DNAT go to Policy
-	self.svcProxy.InitDNATTable(TIER0_TBL_ID)
+	self.svcProxy.InitDNATTable(POLICY_TIER0_TBL_ID)
 
 	//Create all drop entries
 	// Drop mcast source mac
@@ -1312,4 +1312,8 @@ func Vrfmetadata(vrfid uint16) (uint64, uint64) {
 
 //FlushEndpoints flushes endpoints from ovs
 func (self *Vrouter) FlushEndpoints(endpointType int) {
+}
+
+func (self *Vrouter) GetPolicyAgent() *PolicyAgent {
+	return self.policyAgent
 }

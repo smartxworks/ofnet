@@ -886,7 +886,7 @@ func (vl *Vlrouter) initFgraph() error {
 	}
 
 	// Matches in DNAT go to Policy
-	vl.svcProxy.InitDNATTable(TIER0_TBL_ID)
+	vl.svcProxy.InitDNATTable(POLICY_TIER0_TBL_ID)
 
 	//Create all drop entries
 	// Drop mcast source mac
@@ -1348,4 +1348,8 @@ func (vl *Vlrouter) FlushEndpoints(endpointType int) {
 			}
 		}
 	}
+}
+
+func (vl *Vlrouter) GetPolicyAgent() *PolicyAgent {
+	return vl.policyAgent
 }
