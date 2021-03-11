@@ -1313,3 +1313,7 @@ func Vrfmetadata(vrfid uint16) (uint64, uint64) {
 //FlushEndpoints flushes endpoints from ovs
 func (self *Vrouter) FlushEndpoints(endpointType int) {
 }
+
+func (self *Vrouter) GetPolicyAgent() *PolicyAgent {
+	return self.policyAgent
+}

@@ -1349,3 +1349,7 @@ func (vl *Vlrouter) FlushEndpoints(endpointType int) {
 		}
 	}
 }
+
+func (vl *Vlrouter) GetPolicyAgent() *PolicyAgent {
+	return vl.policyAgent
+}

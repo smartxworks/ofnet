@@ -39,14 +39,23 @@ type PolicyRule struct {
 
 // PolicyAgent is an instance of a policy agent
 type PolicyAgent struct {
-	agent       *OfnetAgent             // Pointer back to ofnet agent that owns this
-	ofSwitch    *ofctrl.OFSwitch        // openflow switch we are talking to
-	dstGrpTable *ofctrl.Table           // dest group lookup table
-	policyTable *ofctrl.Table           // Policy rule lookup table
-	nextTable   *ofctrl.Table           // Next table to goto for accepted packets
-	Rules       map[string]*PolicyRule  // rules database
-	dstGrpFlow  map[string]*ofctrl.Flow // FLow entries for dst group lookup
-	mutex       sync.RWMutex
+	agent                    *OfnetAgent      // Pointer back to ofnet agent that owns this
+	ofSwitch                 *ofctrl.OFSwitch // openflow switch we are talking to
+	dstGrpTable              *ofctrl.Table    // dest group lookup table
+	policyTable              *ofctrl.Table    // Policy rule lookup table
+	nextTable                *ofctrl.Table    // Next table to goto for accepted packets
+	egressTier0Table         *ofctrl.Table
+	egressTier1Table         *ofctrl.Table
+	egressTier1DefaultTable  *ofctrl.Table
+	egressTier2Table         *ofctrl.Table
+	ingressTier0Table        *ofctrl.Table
+	ingressTier1Table        *ofctrl.Table
+	ingressTier1DefaultTable *ofctrl.Table
+	ingressTier2Table        *ofctrl.Table
+	ingressSelectTable       *ofctrl.Table
+	Rules                    map[string]*PolicyRule  // rules database
+	dstGrpFlow               map[string]*ofctrl.Flow // FLow entries for dst group lookup
+	mutex                    sync.RWMutex
 }
 
 // NewPolicyMgr Creates a new policy manager
@@ -59,7 +68,9 @@ func NewPolicyAgent(agent *OfnetAgent, rpcServ *rpc.Server) *PolicyAgent {
 	policyAgent.dstGrpFlow = make(map[string]*ofctrl.Flow)
 
 	// Register for Master add/remove events
-	rpcServ.Register(policyAgent)
+	if rpcServ != nil {
+		rpcServ.Register(policyAgent)
+	}
 
 	// done
 	return policyAgent
@@ -99,8 +110,46 @@ func (self *PolicyAgent) DelIpv6Endpoint(endpoint *OfnetEndpoint) error {
 	return nil
 }
 
-// AddRule adds a security rule to policy table
-func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
+func (self *PolicyAgent) GetTierTable(direction uint8, tier uint8) (*ofctrl.Table, *ofctrl.Table, error) {
+	var policyTable, nextTable *ofctrl.Table
+	switch direction {
+	case POLICY_DIRECTION_OUT:
+		switch tier {
+		case POLICY_TIER0:
+			policyTable = self.egressTier0Table
+			// Tier0 table as user defined high priority emergency tableTable
+			nextTable = self.nextTable
+		case POLICY_TIER1:
+			policyTable = self.egressTier1Table
+			nextTable = self.egressTier2Table
+		case POLICY_TIER2:
+			policyTable = self.egressTier2Table
+			nextTable = self.ingressSelectTable
+		default:
+			return nil, nil, errors.New("unknow policy tier")
+		}
+	case POLICY_DIRECTION_IN:
+		switch tier {
+		case POLICY_TIER0:
+			policyTable = self.ingressTier0Table
+			// Tier0 table as user defined high priority emergency tableTable, packet may be droped by this policyrule
+			// (for high precedency isolate some endpoint); it also may be allow only specific traffic for
+			nextTable = self.nextTable
+		case POLICY_TIER1:
+			policyTable = self.ingressTier1Table
+			nextTable = self.ingressTier2Table
+		case POLICY_TIER2:
+			policyTable = self.ingressTier2Table
+			nextTable = self.nextTable
+		default:
+			return nil, nil, errors.New("unknow policy tier")
+		}
+	}
+
+	return policyTable, nextTable, nil
+}
+
+func (self *PolicyAgent) AddRuleToTier(rule *OfnetPolicyRule, direction uint8, tier uint8) error {
 	var ipDa *net.IP = nil
 	var ipDaMask *net.IP = nil
 	var ipSa *net.IP = nil
@@ -109,6 +158,13 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 	var flagPtr, flagMaskPtr *uint16
 	var err error
 
+	// Different tier have different nextTable select strategy:
+	policyTable, nextTable, e := self.GetTierTable(direction, tier)
+	if e != nil {
+		log.Errorf("error when get policy table tier %v", tier)
+		return errors.New("failed get policy table")
+	}
+
 	// make sure switch is connected
 	if !self.agent.IsSwitchConnected() {
 		self.agent.WaitForSwitchConnection()
@@ -116,7 +172,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 
 	// check if we already have the rule
 	self.mutex.RLock()
-	if self.Rules[rule.RuleId] != nil {
+	if _, ok := self.Rules[rule.RuleId]; ok {
 		oldRule := self.Rules[rule.RuleId].Rule
 
 		if ruleIsSame(oldRule, rule) {
@@ -177,7 +233,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 		flagMaskPtr = &flagMask
 	}
 	// Install the rule in policy table
-	ruleFlow, err := self.policyTable.NewFlow(ofctrl.FlowMatch{
+	ruleFlow, err := policyTable.NewFlow(ofctrl.FlowMatch{
 		Priority:     uint16(FLOW_POLICY_PRIORITY_OFFSET + rule.Priority),
 		Ethertype:    0x0800,
 		IpDa:         ipDa,
@@ -199,7 +255,7 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 
 	// Point it to next table
 	if rule.Action == "allow" {
-		err = ruleFlow.Next(self.nextTable)
+		err = ruleFlow.Next(nextTable)
 		if err != nil {
 			log.Errorf("Error installing flow {%+v}. Err: %v", ruleFlow, err)
 			return err
@@ -225,6 +281,11 @@ func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
 	self.mutex.Unlock()
 
 	return nil
+}
+
+// AddRule adds a security rule to policy table
+func (self *PolicyAgent) AddRule(rule *OfnetPolicyRule, ret *bool) error {
+	return self.AddRuleToTier(rule, POLICY_DIRECTION_OUT, POLICY_TIER0)
 }
 
 // DelRule deletes a security rule from policy table
@@ -264,20 +325,53 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	self.nextTable = nextTbl
 
 	// Create all tables
-	self.dstGrpTable, _ = sw.NewTable(DST_GRP_TBL_ID)
-	self.policyTable, _ = sw.NewTable(POLICY_TBL_ID)
+	self.egressTier0Table, _ = sw.NewTable(EGRESS_TIER0_TBL_ID)
+	self.egressTier1Table, _ = sw.NewTable(EGRESS_TIER1_TBL_ID)
+	self.egressTier2Table, _ = sw.NewTable(EGRESS_TIER2_TBL_ID)
+	self.ingressTier0Table, _ = sw.NewTable(INGRESS_TIER0_TBL_ID)
+	self.ingressTier1Table, _ = sw.NewTable(INGRESS_TIER1_TBL_ID)
+	self.ingressTier2Table, _ = sw.NewTable(INGRESS_TIER2_TBL_ID)
 
-	// Packets that miss dest group lookup still go to policy table
-	validPktFlow, _ := self.dstGrpTable.NewFlow(ofctrl.FlowMatch{
+	self.ingressSelectTable, _ = sw.NewTable(INGRESS_SELECT_TBL_ID)
+
+	// Init default flow
+	egressTier0TableDefaultFlow, _ := self.egressTier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	validPktFlow.Next(self.policyTable)
+	egressTier0TableDefaultFlow.Next(self.egressTier1Table)
 
-	// Packets that didnt match any rule go to next table
-	vlanMissFlow, _ := self.policyTable.NewFlow(ofctrl.FlowMatch{
+	// EgressTier1 && egressTier1Default table implement k8s network policy model
+	egressTier1TableDefaultFlow, _ := self.egressTier1Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	vlanMissFlow.Next(nextTbl)
+	egressTier1TableDefaultFlow.Next(self.egressTier2Table)
+
+	egressTier2TableDefaultFlow, _ := self.egressTier2Table.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	egressTier2TableDefaultFlow.Next(self.ingressSelectTable)
+
+	// Ingress select table implement to local flow redirect, defalult flow redirect all miss flow to normal lookup table
+	ingressSelectTableDefaultFlow, _ := self.ingressSelectTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	ingressSelectTableDefaultFlow.Next(self.nextTable)
+
+	ingressTier0TableDefaultFlow, _ := self.ingressTier0Table.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	ingressTier0TableDefaultFlow.Next(self.ingressTier1Table)
+
+	// IngressTier1Table && ingressTier1DefaultTable implement k8s network policy model
+	ingressTier1TableDefaultFlow, _ := self.ingressTier1Table.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	ingressTier1TableDefaultFlow.Next(self.ingressTier2Table)
+
+	ingressTier2TableDefaultFlow, _ := self.ingressTier2Table.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	ingressTier2TableDefaultFlow.Next(self.nextTable)
 
 	return nil
 }

@@ -1260,3 +1260,7 @@ func (self *Vxlan) sendGARP(ip net.IP, mac net.HardwareAddr, vni uint64) error {
 //FlushEndpoints flushes endpoints from ovs
 func (self *Vxlan) FlushEndpoints(endpointType int) {
 }
+
+func (self *Vxlan) GetPolicyAgent() *PolicyAgent {
+	return self.policyAgent
+}

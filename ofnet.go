@@ -114,6 +114,8 @@ type OfnetDatapath interface {
 
 	// flush the endpoints
 	FlushEndpoints(endpointType int)
+
+	GetPolicyAgent() *PolicyAgent
 }
 
 // Interface implemented by each control protocol.

@@ -528,3 +528,7 @@ func (self *VlanArpLearnerBridge) GlobalConfigUpdate(cfg OfnetGlobalConfig) erro
 //FlushEndpoints flushes endpoints from ovs
 func (self *VlanArpLearnerBridge) FlushEndpoints(endpointType int) {
 }
+
+func (self *VlanArpLearnerBridge) GetPolicyAgent() *PolicyAgent {
+	return self.policyAgent
+}

@@ -1077,3 +1077,7 @@ func (vl *VlanBridge) listLinks() []string {
 //FlushEndpoints flushes endpoints from ovs
 func (vl *VlanBridge) FlushEndpoints(endpointType int) {
 }
+
+func (vl *VlanBridge) GetPolicyAgent() *PolicyAgent {
+	return vl.policyAgent
+}
