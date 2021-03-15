@@ -1377,3 +1377,7 @@ func (self *OfnetAgent) unsetInternalBgp(endpoint *OfnetEndpoint) {
 func (self *OfnetAgent) FlushEndpoints(endpointType int) {
 	self.datapath.FlushEndpoints(endpointType)
 }
+
+func (self *OfnetAgent) GetDatapath() OfnetDatapath {
+            return self.datapath
+}
