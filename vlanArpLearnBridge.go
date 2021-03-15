@@ -286,13 +286,13 @@ func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint3
 }
 
 func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32) {
-	var updatedEndpointOfPorts, deprecatedEndpointOfPorts []uint32
+	var ofPortUpdatedPorts, ipAddrUpdatedPorts, deprecatedEndpointOfPorts []uint32
 
 	if self.isLocalInputPort(inPort) {
-		updatedEndpointOfPorts = self.filterByMacAddr(arpIn, inPort)
+		ofPortUpdatedPorts, ipAddrUpdatedPorts = self.filterByMacAddr(arpIn, inPort)
 
 		// ArpIn related endpointInfo entry not exists, just add it
-		if len(updatedEndpointOfPorts) == 0 {
+		if len(ofPortUpdatedPorts) == 0 && len(ipAddrUpdatedPorts) == 0 {
 			log.Infof("Learning localOfPort endpointInfo %d : %v.", inPort, arpIn.IPSrc)
 			self.addLocalEndpointInfoEntry(arpIn, inPort)
 			self.installIngressSelectFlow(arpIn.HWSrc)
@@ -301,15 +301,20 @@ func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32
 		}
 
 		// ArpIn related endpointInfo entry already exists, Update map[ofport]endpointInfo
-		for _, ofPort := range updatedEndpointOfPorts {
+		for _, ofPort := range ofPortUpdatedPorts {
 			log.Infof("Update localOfPort endpointInfo from %d : %v to %d : %v", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, inPort, arpIn.IPSrc)
-			self.uninstallIngressSelectFlow(self.agent.localEndpointInfo[ofPort].MacAddr)
 			delete(self.agent.localEndpointInfo, ofPort)
+            self.notifyLocalEndpointInfoUpdate(arpIn, ofPort, true)
 
-			self.installIngressSelectFlow(arpIn.HWSrc)
 			self.addLocalEndpointInfoEntry(arpIn, inPort)
 			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
 		}
+
+        for _, ofPort := range ipAddrUpdatedPorts {
+            log.Infof("Update ip address of local endpoint with ofPort %d from %v to %v.", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, arpIn.IPSrc)
+            self.addLocalEndpointInfoEntry(arpIn, inPort)
+            self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
+        }
 	} else {
 		deprecatedEndpointOfPorts = self.filterByIpAddr(arpIn, inPort)
 
@@ -335,20 +340,20 @@ func (self *VlanArpLearnerBridge) filterByIpAddr(arpIn protocol.ARP, inPort uint
 	return ports
 }
 
-func (self *VlanArpLearnerBridge) filterByMacAddr(arpIn protocol.ARP, inPort uint32) []uint32 {
-	var ports []uint32
+func (self *VlanArpLearnerBridge) filterByMacAddr(arpIn protocol.ARP, inPort uint32) ([]uint32, []uint32) {
+	var ofPortUpdatedPorts, ipAddrUpdatedPorts []uint32
 
 	for ofPort, endpointInfo := range self.agent.localEndpointInfo {
 		if endpointInfo.MacAddr.String() == arpIn.HWSrc.String() && ofPort != inPort {
-			ports = append(ports, ofPort)
+			ofPortUpdatedPorts = append(ofPortUpdatedPorts, ofPort)
 		}
 		if endpointInfo.MacAddr.String() == arpIn.HWSrc.String() && ofPort == inPort &&
 			!endpointInfo.IpAddr.Equal(arpIn.IPSrc) {
-			ports = append(ports, ofPort)
+			ipAddrUpdatedPorts = append(ipAddrUpdatedPorts, ofPort)
 		}
 	}
 
-	return ports
+	return ofPortUpdatedPorts, ipAddrUpdatedPorts
 }
 
 func (self *VlanArpLearnerBridge) isLocalInputPort(inPort uint32) bool {
