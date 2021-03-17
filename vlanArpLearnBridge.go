@@ -304,17 +304,17 @@ func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32
 		for _, ofPort := range ofPortUpdatedPorts {
 			log.Infof("Update localOfPort endpointInfo from %d : %v to %d : %v", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, inPort, arpIn.IPSrc)
 			delete(self.agent.localEndpointInfo, ofPort)
-            self.notifyLocalEndpointInfoUpdate(arpIn, ofPort, true)
+			self.notifyLocalEndpointInfoUpdate(arpIn, ofPort, true)
 
 			self.addLocalEndpointInfoEntry(arpIn, inPort)
 			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
 		}
 
-        for _, ofPort := range ipAddrUpdatedPorts {
-            log.Infof("Update ip address of local endpoint with ofPort %d from %v to %v.", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, arpIn.IPSrc)
-            self.addLocalEndpointInfoEntry(arpIn, inPort)
-            self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
-        }
+		for _, ofPort := range ipAddrUpdatedPorts {
+			log.Infof("Update ip address of local endpoint with ofPort %d from %v to %v.", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, arpIn.IPSrc)
+			self.addLocalEndpointInfoEntry(arpIn, inPort)
+			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
+		}
 	} else {
 		deprecatedEndpointOfPorts = self.filterByIpAddr(arpIn, inPort)
 

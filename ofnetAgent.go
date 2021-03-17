@@ -164,9 +164,9 @@ const (
 )
 
 const (
-	POLICY_TIER0         = 0
-	POLICY_TIER1         = 1
-	POLICY_TIER2         = 2
+	POLICY_TIER0 = 0
+	POLICY_TIER1 = 1
+	POLICY_TIER2 = 2
 )
 
 const (
@@ -1379,5 +1379,5 @@ func (self *OfnetAgent) FlushEndpoints(endpointType int) {
 }
 
 func (self *OfnetAgent) GetDatapath() OfnetDatapath {
-            return self.datapath
+	return self.datapath
 }

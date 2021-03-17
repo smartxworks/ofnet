@@ -158,16 +158,16 @@ func (self *PolicyAgent) AddRuleToTier(rule *OfnetPolicyRule, direction uint8, t
 	var flagPtr, flagMaskPtr *uint16
 	var err error
 
+	// make sure switch is connected
+	if !self.agent.IsSwitchConnected() {
+		self.agent.WaitForSwitchConnection()
+	}
+
 	// Different tier have different nextTable select strategy:
 	policyTable, nextTable, e := self.GetTierTable(direction, tier)
 	if e != nil {
 		log.Errorf("error when get policy table tier %v", tier)
 		return errors.New("failed get policy table")
-	}
-
-	// make sure switch is connected
-	if !self.agent.IsSwitchConnected() {
-		self.agent.WaitForSwitchConnection()
 	}
 
 	// check if we already have the rule
@@ -177,11 +177,12 @@ func (self *PolicyAgent) AddRuleToTier(rule *OfnetPolicyRule, direction uint8, t
 
 		if ruleIsSame(oldRule, rule) {
 			self.mutex.RUnlock()
+			log.Infof("Rule already exists. new rule: {%+v}, old rule: {%+v}", rule, oldRule)
 			return nil
 		} else {
 			self.mutex.RUnlock()
-			log.Errorf("Rule already exists. new rule: {%+v}, old rule: {%+v}", rule, oldRule)
-			return errors.New("Rule already exists")
+			log.Fatalf("Different rule %v and %v with same ruleId.", oldRule, rule)
+			return nil
 		}
 	}
 	self.mutex.RUnlock()
@@ -297,8 +298,8 @@ func (self *PolicyAgent) DelRule(rule *OfnetPolicyRule, ret *bool) error {
 	defer self.mutex.Unlock()
 	cache := self.Rules[rule.RuleId]
 	if cache == nil {
-		log.Errorf("Could not find rule: %+v", rule)
-		return errors.New("rule not found")
+		log.Infof("Rule not found when deleting %+v", rule)
+		return nil
 	}
 
 	// Delete the Flow
