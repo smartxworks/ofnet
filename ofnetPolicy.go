@@ -306,6 +306,7 @@ func (self *PolicyAgent) DelRule(rule *OfnetPolicyRule, ret *bool) error {
 	err := cache.flow.Delete()
 	if err != nil {
 		log.Errorf("Error deleting flow: %+v. Err: %v", rule, err)
+        return err
 	}
 
 	// Delete the rule from cache
