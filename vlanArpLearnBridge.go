@@ -357,11 +357,10 @@ func (self *VlanArpLearnerBridge) filterByMacAddr(arpIn protocol.ARP, inPort uin
 }
 
 func (self *VlanArpLearnerBridge) isLocalInputPort(inPort uint32) bool {
-	isLocalPort := false
 	uplinkOfPortSet := self.getUplinkPort()
-	isLocalPort = uplinkOfPortSet.Contains(inPort)
+	isUplinkPort := uplinkOfPortSet.Contains(inPort)
 
-	return isLocalPort
+	return !isUplinkPort
 }
 
 func (self *VlanArpLearnerBridge) getUplinkPort() mapset.Set {
