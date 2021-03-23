@@ -247,6 +247,68 @@ func (self *OvsDriver) DeleteBridge(bridgeName string) error {
 	return self.ovsdbTransact(operations)
 }
 
+func (self *OvsDriver) GetExternalIds() (map[string]string, error) {
+	selectOper := libovsdb.Operation{
+		Op:      "select",
+		Table:   "Bridge",
+		Where:   []interface{}{[]interface{}{"name", "==", self.OvsBridgeName}},
+		Columns: []string{"external_ids"},
+	}
+
+	opers := []libovsdb.Operation{selectOper}
+	ovsBridgeExternalids, err := self.ovsClient.Transact("Open_vSwitch", opers...)
+	if err != nil {
+		return nil, fmt.Errorf("ovsdb select externalIds transaction failed: %v", opers)
+	}
+	if len(ovsBridgeExternalids[0].Rows) == 0 {
+		return map[string]string{}, nil
+	}
+	externalIds := ovsBridgeExternalids[0].Rows[0]["external_ids"].([]interface{})
+
+	return buildMapFromOVSDBMap(externalIds), nil
+}
+
+func (self *OvsDriver) SetExternalIds(externalIds map[string]string) error {
+	oMap := buildOVSDBMapFromMap(externalIds)
+	row := make(map[string]interface{})
+	row["external_ids"] = oMap
+
+	// simple insert operation
+	updateOper := libovsdb.Operation{
+		Op:    "update",
+		Table: "Bridge",
+		Where: []interface{}{[]interface{}{"name", "==", self.OvsBridgeName}},
+		Row:   row,
+	}
+	updateOpers := []libovsdb.Operation{updateOper}
+
+	return self.ovsdbTransact(updateOpers)
+}
+
+func buildMapFromOVSDBMap(data []interface{}) map[string]string {
+	if data[0] == "map" {
+		ret := make(map[string]string)
+		for _, pair := range data[1].([]interface{}) {
+			ret[pair.([]interface{})[0].(string)] = pair.([]interface{})[1].(string)
+		}
+		return ret
+	} else {
+		return map[string]string{}
+	}
+}
+
+func buildOVSDBMapFromMap(data map[string]string) []interface{} {
+	list := []interface{}{}
+	for k, v := range data {
+		list = append(list, []string{k, v})
+	}
+
+	return []interface{}{
+		"map",
+		list,
+	}
+}
+
 // Create an internal port in OVS
 func (self *OvsDriver) CreatePort(intfName, intfType string, vlanTag uint) error {
 	portUuidStr := intfName

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"strconv"
 	"sync"
 	"time"
 
@@ -39,6 +40,8 @@ import (
 	"github.com/jainvipin/bitset"
 	cmap "github.com/streamrail/concurrent-map"
 )
+
+const OfnetRestartRound string = "ofnetRestartRound"
 
 type OVSPort string
 type endpointInfo struct {
@@ -111,6 +114,58 @@ type OfnetAgent struct {
 	localEndpointInfo         map[uint32]*endpointInfo
 	ofPortIpAddressUpdateChan chan map[uint32][]net.IP
 	uplinkPortInfo            *PortInfo
+	roundInfo                 *RoundInfo
+}
+
+type RoundInfo struct {
+	previousRoundNum uint64
+	curRoundNum      uint64
+}
+
+func getRoundInfo(ovsdbDriver *ovsdbDriver.OvsDriver) (*RoundInfo, error) {
+	var num uint64
+	var err error
+
+	externalIds, err := ovsdbDriver.GetExternalIds()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get ovsdb externalids: %v", err)
+	}
+
+	if len(externalIds) == 0 {
+		log.Infof("Bridge's external-ids are empty")
+		return &RoundInfo{
+			curRoundNum: uint64(1),
+		}, nil
+	}
+
+	roundNum, exists := externalIds[OfnetRestartRound]
+	if !exists {
+		log.Infof("Bridge's external-ids don't contain ofnetRestartRound field")
+		return &RoundInfo{
+			curRoundNum: uint64(1),
+		}, nil
+	}
+
+	num, err = strconv.ParseUint(roundNum, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("Bad format of round number: %+v, parse error: %+v", roundNum, err)
+	}
+
+	return &RoundInfo{
+		previousRoundNum: num,
+		curRoundNum:      num + 1,
+	}, nil
+}
+
+func persistentRoundInfo(curRoundNum uint64, ovsdbDriver *ovsdbDriver.OvsDriver) error {
+	externalIds, err := ovsdbDriver.GetExternalIds()
+	if err != nil {
+		return err
+	}
+
+	externalIds[OfnetRestartRound] = fmt.Sprint(curRoundNum)
+
+	return ovsdbDriver.SetExternalIds(externalIds)
 }
 
 // local End point information
@@ -235,8 +290,9 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 	// Register for Master add/remove events
 	rpcServ.Register(agent)
 
-	// Create the datapath
+	agent.ovsDriver = ovsdbDriver.NewOvsDriver(bridgeName)
 
+	// Create the datapath
 	switch dpName {
 	case "vrouter":
 		agent.datapath = NewVrouter(agent, rpcServ)

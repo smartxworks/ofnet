@@ -487,6 +487,7 @@ func (self *Flow) install() error {
 	flowMod.TableId = self.Table.TableId
 	flowMod.Priority = self.Match.Priority
 	flowMod.Cookie = self.FlowID
+	flowMod.CookieMask = uint64(0xffffffffffffffff)
 
 	// Add or modify
 	if !self.isInstalled {
@@ -566,6 +567,7 @@ func (self *Flow) SetConntrack(connTrackAction *ConnTrackAction) error {
 	flowMod.TableId = self.Table.TableId
 	flowMod.Priority = self.Match.Priority
 	flowMod.Cookie = self.FlowID
+	flowMod.CookieMask = uint64(0xffffffffffffffff)
 
 	if !self.isInstalled {
 		flowMod.Command = openflow13.FC_ADD
@@ -827,7 +829,7 @@ func (self *Flow) Delete() error {
 		flowMod.TableId = self.Table.TableId
 		flowMod.Priority = self.Match.Priority
 		flowMod.Cookie = self.FlowID
-		flowMod.CookieMask = 0xffffffffffffffff
+		flowMod.CookieMask = uint64(0xffffffffffffffff)
 		flowMod.OutPort = openflow13.P_ANY
 		flowMod.OutGroup = openflow13.OFPG_ANY
 

@@ -25,6 +25,8 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	cmap "github.com/streamrail/concurrent-map"
+
+	"github.com/contiv/ofnet/ofctrl/cookie"
 )
 
 type OFSwitch struct {
@@ -38,6 +40,8 @@ type OFSwitch struct {
 	normalLookup *Output
 	portMux      sync.Mutex
 	outputPorts  map[uint32]*Output
+
+	CookieAllocator cookie.Allocator
 }
 
 var switchDb cmap.ConcurrentMap

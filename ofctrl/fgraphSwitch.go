@@ -20,6 +20,8 @@ import (
 	"errors"
 
 	"github.com/contiv/libOpenflow/openflow13"
+
+	"github.com/contiv/ofnet/ofctrl/cookie"
 )
 
 // Initialize the fgraph elements on the switch
@@ -153,4 +155,21 @@ func (self *OFSwitch) NewFlood() (*Flood, error) {
 	flood.install()
 
 	return flood, nil
+}
+
+func (self *OFSwitch) DeleteFlowByRoundInfo(roundNum uint64) {
+	cookie, cookieMask := cookie.RoundCookieWithMask(roundNum)
+	self.DeleteFlowByCookie(cookie, cookieMask)
+}
+
+func (self *OFSwitch) DeleteFlowByCookie(cookieId, cookieMask uint64) {
+	flowMod := openflow13.NewFlowMod()
+	flowMod.Command = openflow13.FC_DELETE
+	flowMod.Cookie = cookieId
+	flowMod.CookieMask = cookieMask
+	flowMod.OutPort = openflow13.P_ANY
+	flowMod.OutGroup = openflow13.OFPG_ANY
+	flowMod.TableId = openflow13.OFPTT_ALL
+
+	self.Send(flowMod)
 }

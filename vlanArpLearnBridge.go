@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/contiv/libOpenflow/openflow13"
+	"github.com/contiv/libOpenflow/protocol"
 	"github.com/deckarep/golang-set"
 	cmap "github.com/streamrail/concurrent-map"
 
-	"github.com/contiv/libOpenflow/openflow13"
-	"github.com/contiv/libOpenflow/protocol"
 	"github.com/contiv/ofnet/ofctrl"
+	"github.com/contiv/ofnet/ofctrl/cookie"
 )
 
 type VlanArpLearnerBridge struct {
@@ -213,8 +215,33 @@ func (self *VlanArpLearnerBridge) initFgraph() error {
 // Controller appinterface: SwitchConnected, SwichDisConnected, MultipartReply, PacketRcvd
 func (self *VlanArpLearnerBridge) SwitchConnected(sw *ofctrl.OFSwitch) {
 	self.ofSwitch = sw
+
+	roundInfo, err := getRoundInfo(self.agent.ovsDriver)
+	if err != nil {
+		log.Fatalf("Failed to get Roundinfo from ovsdb: %v", err)
+	}
+
+	// Delete flow with curRoundNum cookie, for case: failed when restart process flow install.
+	self.ofSwitch.DeleteFlowByRoundInfo(roundInfo.curRoundNum)
+	cookieAllocator := cookie.NewAllocator(roundInfo.curRoundNum)
+	self.ofSwitch.CookieAllocator = cookieAllocator
+
 	self.policyAgent.SwitchConnected(sw)
 	self.initFgraph()
+
+    // Delete flow with previousRoundNum cookie, and then persistent curRoundNum to ovsdb. We need to wait for long
+    // enough to guarantee that all of the basic flow which we are still required updated with new roundInfo encoding to
+    // flow cookie fields. But the time required to update all of the basic flow with updated roundInfo is
+    // non-determined.
+    // TODO  Implement a deterministic mechanism to control outdated flow flush procedure
+	go func() {
+		time.Sleep(time.Second * 15)
+		self.ofSwitch.DeleteFlowByRoundInfo(roundInfo.previousRoundNum)
+		err = persistentRoundInfo(roundInfo.curRoundNum, self.agent.ovsDriver)
+		if err != nil {
+			log.Fatalf("Failed to persistent roundInfo into ovsdb: %v", err)
+		}
+	}()
 }
 
 func (self *VlanArpLearnerBridge) SwitchDisconnected(sw *ofctrl.OFSwitch) {

@@ -56,7 +56,11 @@ func (self *Table) NewFlow(match FlowMatch) (*Flow, error) {
 	flow.Table = self
 	flow.Match = match
 	flow.isInstalled = false
-	flow.FlowID = globalFlowID // FIXME: need a better id allocation
+	if self.Switch.CookieAllocator != nil {
+		flow.FlowID = self.Switch.CookieAllocator.RequestCookie(globalFlowID).RawId()
+	} else {
+		flow.FlowID = globalFlowID // FIXME: need a better id allocation
+	}
 	globalFlowID += 1
 	flow.flowActions = make([]*FlowAction, 0)
 
