@@ -109,6 +109,7 @@ type OfnetAgent struct {
 
 	localEndpointInfo         map[uint32]*endpointInfo
 	ofPortIpAddressUpdateChan chan map[uint32][]net.IP
+	uplinkPortInfo            *PortInfo
 }
 
 // local End point information
@@ -180,7 +181,7 @@ const (
 
 // Create a new Ofnet agent and initialize it
 func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uint16,
-	ovsPort uint16, uplinkInfo []string, ofPortIpAddressUpdateChan chan map[uint32][]net.IP) (*OfnetAgent, error) {
+	ovsPort uint16, uplinkPortInfo *PortInfo, uplinkInfo []string, ofPortIpAddressUpdateChan chan map[uint32][]net.IP) (*OfnetAgent, error) {
 	log.Infof("Creating new ofnet agent for %s,%s,%d,%d,%d\n", bridgeName, dpName, localIp, rpcPort, ovsPort)
 	agent := new(OfnetAgent)
 
@@ -223,6 +224,7 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 	agent.ctrler = ofctrl.NewController(agent)
 	agent.localEndpointInfo = make(map[uint32]*endpointInfo)
 	agent.ofPortIpAddressUpdateChan = ofPortIpAddressUpdateChan
+	agent.uplinkPortInfo = uplinkPortInfo
 
 	// FIXME: Figure out how to handle multiple OVS bridges.
 	rpcServ, listener := rpcHub.NewRpcServer(rpcPort)
@@ -405,6 +407,13 @@ func (self *OfnetAgent) SwitchConnected(sw *ofctrl.OFSwitch) {
 
 	// Inform the datapath
 	self.datapath.SwitchConnected(sw)
+
+	if self.uplinkPortInfo != nil {
+		err := self.AddUplink(self.uplinkPortInfo)
+		if err != nil {
+			log.Fatalf("error when add uplink: %v", err)
+		}
+	}
 
 	self.mutex.Lock()
 	self.isConnected = true

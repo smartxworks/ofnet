@@ -272,6 +272,12 @@ func (self *VlanArpLearnerBridge) PacketRcvd(sw *ofctrl.OFSwitch, pkt *ofctrl.Pa
 func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint32) {
 	var isLearning bool = false
 
+	// If ofSwitch appinterface was initialized, but uplink wasn't, just send received arp packet normally
+	if self.uplinkPortDb.IsEmpty() {
+		self.arpNoraml(pkt, inPort)
+		return
+	}
+
 	switch t := pkt.Data.(type) {
 	case *protocol.ARP:
 		var arpIn protocol.ARP = *t
