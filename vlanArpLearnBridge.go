@@ -387,10 +387,14 @@ func (self *VlanArpLearnerBridge) notifyLocalEndpointInfoUpdate(arpIn protocol.A
 }
 
 func (self *VlanArpLearnerBridge) addLocalEndpointInfoEntry(arpIn protocol.ARP, ofPort uint32) {
+	learnedIp := make(net.IP, len(arpIn.IPSrc))
+	learnedMac := make(net.HardwareAddr, len(arpIn.HWSrc))
+	copy(learnedIp, arpIn.IPSrc)
+	copy(learnedMac, arpIn.HWSrc)
 	endpointInfo := &endpointInfo{
 		OfPort:  ofPort,
-		IpAddr:  arpIn.IPSrc,
-		MacAddr: arpIn.HWSrc,
+		IpAddr:  learnedIp,
+		MacAddr: learnedMac,
 	}
 	self.agent.localEndpointInfo[ofPort] = endpointInfo
 }
