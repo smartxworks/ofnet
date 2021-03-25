@@ -419,6 +419,7 @@ func (self *VlanArpLearnerBridge) installIngressSelectFlow(macDa net.HardwareAdd
 	ingressTier0Table := self.ofSwitch.GetTable(INGRESS_TIER0_TBL_ID)
 
 	ingressSelectFlow, _ := ingressSelectTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY,
 		Ethertype: 0x0800,
 		MacDa:     &macDa,
 	})
