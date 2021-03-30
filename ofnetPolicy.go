@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/contiv/libOpenflow/openflow13"
 	"github.com/contiv/ofnet/ofctrl"
 )
 
@@ -30,6 +31,12 @@ import (
 
 const TCP_FLAG_ACK = 0x10
 const TCP_FLAG_SYN = 0x2
+
+var (
+	conntrackStateTableId  uint8  = CONNTRACK_STATE_TBL_ID
+	conntrackCommitTableId uint8  = MAC_DEST_TBL_ID
+	conntrackZone          uint16 = 65535
+)
 
 // PolicyRule has info about single rule
 type PolicyRule struct {
@@ -39,23 +46,25 @@ type PolicyRule struct {
 
 // PolicyAgent is an instance of a policy agent
 type PolicyAgent struct {
-	agent                    *OfnetAgent      // Pointer back to ofnet agent that owns this
-	ofSwitch                 *ofctrl.OFSwitch // openflow switch we are talking to
-	dstGrpTable              *ofctrl.Table    // dest group lookup table
-	policyTable              *ofctrl.Table    // Policy rule lookup table
-	nextTable                *ofctrl.Table    // Next table to goto for accepted packets
-	egressTier0Table         *ofctrl.Table
-	egressTier1Table         *ofctrl.Table
-	egressTier1DefaultTable  *ofctrl.Table
-	egressTier2Table         *ofctrl.Table
-	ingressTier0Table        *ofctrl.Table
-	ingressTier1Table        *ofctrl.Table
-	ingressTier1DefaultTable *ofctrl.Table
-	ingressTier2Table        *ofctrl.Table
-	ingressSelectTable       *ofctrl.Table
-	Rules                    map[string]*PolicyRule  // rules database
-	dstGrpFlow               map[string]*ofctrl.Flow // FLow entries for dst group lookup
-	mutex                    sync.RWMutex
+	agent                *OfnetAgent      // Pointer back to ofnet agent that owns this
+	ofSwitch             *ofctrl.OFSwitch // openflow switch we are talking to
+	dstGrpTable          *ofctrl.Table    // dest group lookup table
+	policyTable          *ofctrl.Table    // Policy rule lookup table
+	nextTable            *ofctrl.Table    // Next table to goto for accepted packets
+	conntrackTable       *ofctrl.Table
+	conntrackStateTable  *ofctrl.Table
+	conntrackCommitTable *ofctrl.Table
+	egressSelectTable    *ofctrl.Table
+	egressTier0Table     *ofctrl.Table
+	egressTier1Table     *ofctrl.Table
+	egressTier2Table     *ofctrl.Table
+	ingressTier0Table    *ofctrl.Table
+	ingressTier1Table    *ofctrl.Table
+	ingressTier2Table    *ofctrl.Table
+	ingressSelectTable   *ofctrl.Table
+	Rules                map[string]*PolicyRule  // rules database
+	dstGrpFlow           map[string]*ofctrl.Flow // FLow entries for dst group lookup
+	mutex                sync.RWMutex
 }
 
 // NewPolicyMgr Creates a new policy manager
@@ -117,8 +126,7 @@ func (self *PolicyAgent) GetTierTable(direction uint8, tier uint8) (*ofctrl.Tabl
 		switch tier {
 		case POLICY_TIER0:
 			policyTable = self.egressTier0Table
-			// Tier0 table as user defined high priority emergency tableTable
-			nextTable = self.nextTable
+			nextTable = self.egressTier1Table
 		case POLICY_TIER1:
 			policyTable = self.egressTier1Table
 			nextTable = self.egressTier2Table
@@ -132,15 +140,13 @@ func (self *PolicyAgent) GetTierTable(direction uint8, tier uint8) (*ofctrl.Tabl
 		switch tier {
 		case POLICY_TIER0:
 			policyTable = self.ingressTier0Table
-			// Tier0 table as user defined high priority emergency tableTable, packet may be droped by this policyrule
-			// (for high precedency isolate some endpoint); it also may be allow only specific traffic for
-			nextTable = self.nextTable
+			nextTable = self.ingressTier1Table
 		case POLICY_TIER1:
 			policyTable = self.ingressTier1Table
 			nextTable = self.ingressTier2Table
 		case POLICY_TIER2:
 			policyTable = self.ingressTier2Table
-			nextTable = self.nextTable
+			nextTable = self.conntrackCommitTable
 		default:
 			return nil, nil, errors.New("unknow policy tier")
 		}
@@ -306,7 +312,7 @@ func (self *PolicyAgent) DelRule(rule *OfnetPolicyRule, ret *bool) error {
 	err := cache.flow.Delete()
 	if err != nil {
 		log.Errorf("Error deleting flow: %+v. Err: %v", rule, err)
-        return err
+		return err
 	}
 
 	// Delete the rule from cache
@@ -327,6 +333,9 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	self.nextTable = nextTbl
 
 	// Create all tables
+	self.conntrackTable, _ = sw.NewTable(CONNTRACK_TBL_ID)
+	self.conntrackStateTable, _ = sw.NewTable(CONNTRACK_STATE_TBL_ID)
+	self.conntrackCommitTable, _ = sw.NewTable(CONNTRACK_COMMIT_TBL_ID)
 	self.egressTier0Table, _ = sw.NewTable(EGRESS_TIER0_TBL_ID)
 	self.egressTier1Table, _ = sw.NewTable(EGRESS_TIER1_TBL_ID)
 	self.egressTier2Table, _ = sw.NewTable(EGRESS_TIER2_TBL_ID)
@@ -335,14 +344,63 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	self.ingressTier2Table, _ = sw.NewTable(INGRESS_TIER2_TBL_ID)
 
 	self.ingressSelectTable, _ = sw.NewTable(INGRESS_SELECT_TBL_ID)
+	self.egressSelectTable, _ = sw.NewTable(EGRESS_SELECT_TBL_ID)
 
 	// Init default flow
+	// Conntrack Flow
+	ctAction := ofctrl.NewConntrackAction(false, false, &conntrackStateTableId, &conntrackZone)
+	conntrackTableDefaultFlow, _ := self.conntrackTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY,
+		Ethertype: 0x0800,
+	})
+	conntrackTableDefaultFlow.SetConntrack(ctAction)
+
+	// ConntrackState flow
+	ctTrkState := openflow13.NewCTStates()
+	ctTrkState.UnsetNew()
+	ctTrkState.SetTrk()
+	conntrackStateTableTrackedFlow, _ := self.conntrackStateTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MATCH_PRIORITY + 2,
+		CtStates: ctTrkState,
+	})
+	conntrackStateTableTrackedFlow.Next(self.egressSelectTable)
+
+	ctInvState := openflow13.NewCTStates()
+	ctInvState.SetInv()
+	ctInvState.SetTrk()
+	conntrackStateTableInvlidFlow, _ := self.conntrackStateTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MATCH_PRIORITY + 1,
+		CtStates: ctInvState,
+	})
+	conntrackStateTableInvlidFlow.Next(self.ofSwitch.DropAction())
+
+	conntrackStateTableDefaultFlow, _ := self.conntrackStateTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	conntrackStateTableDefaultFlow.Next(self.egressSelectTable)
+
+	// Egress select table implement to uplink ip flow redirect in high priority, defalult flow redirect all missed flow
+	// to egressTier0Table
+	ctEstState := openflow13.NewCTStates()
+	ctEstState.UnsetNew()
+	ctEstState.SetEst()
+	egressSelectTableConnEstFlow, _ := self.egressSelectTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY + 2,
+		Ethertype: 0x0800,
+		CtStates:  ctEstState,
+	})
+	egressSelectTableConnEstFlow.Next(self.conntrackCommitTable)
+
+	egressSelectTableDefaultFlow, _ := self.egressSelectTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	egressSelectTableDefaultFlow.Next(self.egressTier0Table)
+
 	egressTier0TableDefaultFlow, _ := self.egressTier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
 	egressTier0TableDefaultFlow.Next(self.egressTier1Table)
 
-	// EgressTier1 && egressTier1Default table implement k8s network policy model
 	egressTier1TableDefaultFlow, _ := self.egressTier1Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
@@ -353,18 +411,23 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	})
 	egressTier2TableDefaultFlow.Next(self.ingressSelectTable)
 
-	// Ingress select table implement to local flow redirect, defalult flow redirect all miss flow to normal lookup table
+	// Ingress select table implement to local endpoint flow redirect, defalult flow redirect all missed flow to conntrackCommitTable
+	ingressSelectTableCtEstFlow, _ := self.ingressSelectTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MATCH_PRIORITY + 2,
+		CtStates: ctEstState,
+	})
+	ingressSelectTableCtEstFlow.Next(self.conntrackCommitTable)
+
 	ingressSelectTableDefaultFlow, _ := self.ingressSelectTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	ingressSelectTableDefaultFlow.Next(self.nextTable)
+	ingressSelectTableDefaultFlow.Next(self.conntrackCommitTable)
 
 	ingressTier0TableDefaultFlow, _ := self.ingressTier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
 	ingressTier0TableDefaultFlow.Next(self.ingressTier1Table)
 
-	// IngressTier1Table && ingressTier1DefaultTable implement k8s network policy model
 	ingressTier1TableDefaultFlow, _ := self.ingressTier1Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
@@ -373,7 +436,24 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	ingressTier2TableDefaultFlow, _ := self.ingressTier2Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	ingressTier2TableDefaultFlow.Next(self.nextTable)
+	ingressTier2TableDefaultFlow.Next(self.conntrackCommitTable)
+
+	// ConntrackCommit table
+	ctCommitAction := ofctrl.NewConntrackAction(true, false, &conntrackCommitTableId, &conntrackZone)
+	ctTrkedState := openflow13.NewCTStates()
+	ctTrkedState.SetNew()
+	ctTrkedState.SetTrk()
+	conntrackCommitTableCommitFlow, _ := self.conntrackCommitTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY,
+		Ethertype: 0x0800,
+		CtStates:  ctTrkedState,
+	})
+	conntrackCommitTableCommitFlow.SetConntrack(ctCommitAction)
+
+	conntrackCommitTableDefaultFlow, _ := self.conntrackCommitTable.NewFlow(ofctrl.FlowMatch{
+		Priority: FLOW_MISS_PRIORITY,
+	})
+	conntrackCommitTableDefaultFlow.Next(self.nextTable)
 
 	return nil
 }

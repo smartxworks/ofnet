@@ -62,9 +62,10 @@ func (self *VlanArpLearnerBridge) installArpRedirectFlow() error {
 func (self *VlanArpLearnerBridge) installFromUplinkFlow(ofPort uint32) error {
 	// Add uplink port redirect flow: redirect to normalLookupFlow.
 	ingressTier0Table := self.ofSwitch.GetTable(INGRESS_TIER0_TBL_ID)
+	egressSelectTable := self.ofSwitch.GetTable(EGRESS_SELECT_TBL_ID)
 
 	// Datapath setup with specific uplink port configuration. if uplinkport wasn't configured, sendto normal
-	inputFromUplinkIpFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+	inputFromUplinkIpFlow, err := egressSelectTable.NewFlow(ofctrl.FlowMatch{
 		Priority:  FLOW_MATCH_PRIORITY + 1,
 		Ethertype: 0x0800,
 		InputPort: ofPort,
@@ -73,7 +74,7 @@ func (self *VlanArpLearnerBridge) installFromUplinkFlow(ofPort uint32) error {
 		log.Errorf("Error when create inputTable inputFromUplinkIpFlow. Err: %v", err)
 		return err
 	}
-	inputFromUplinkIp6Flow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+	inputFromUplinkIp6Flow, err := egressSelectTable.NewFlow(ofctrl.FlowMatch{
 		Priority:  FLOW_MATCH_PRIORITY + 1,
 		Ethertype: 0x86DD,
 		InputPort: ofPort,
@@ -101,8 +102,9 @@ func (self *VlanArpLearnerBridge) installFromUplinkFlow(ofPort uint32) error {
 func (self *VlanArpLearnerBridge) installFromLocalIpFlow() error {
 	// Send all ip flow except fromUplinkFlow to egressTier0Table
 	egressTier0Table := self.ofSwitch.GetTable(EGRESS_TIER0_TBL_ID)
+	egressSelectTable := self.ofSwitch.GetTable(EGRESS_SELECT_TBL_ID)
 
-	inputIpFromLocalFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+	inputIpFromLocalFlow, err := egressSelectTable.NewFlow(ofctrl.FlowMatch{
 		Priority:  FLOW_MATCH_PRIORITY,
 		Ethertype: 0x0800,
 	})
@@ -110,7 +112,7 @@ func (self *VlanArpLearnerBridge) installFromLocalIpFlow() error {
 		log.Errorf("Error when create inputTable inputFromLocalIpFlow. Err: %v", err)
 		return err
 	}
-	inputIp6FromLocalFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+	inputIp6FromLocalFlow, err := egressSelectTable.NewFlow(ofctrl.FlowMatch{
 		Priority:  FLOW_MATCH_PRIORITY,
 		Ethertype: 0x86DD,
 	})
@@ -209,6 +211,13 @@ func (self *VlanArpLearnerBridge) initFgraph() error {
 		log.Fatalf("Error when installing Policy table. Err: %v", err)
 		return err
 	}
+
+	conntrackTable := self.ofSwitch.GetTable(CONNTRACK_TBL_ID)
+	inputTableIpFlow, _ := self.inputTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY,
+		Ethertype: 0x0800,
+	})
+	inputTableIpFlow.Next(conntrackTable)
 
 	inputMissFlow, _ := self.inputTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,

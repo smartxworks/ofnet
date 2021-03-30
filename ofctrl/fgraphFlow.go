@@ -57,13 +57,7 @@ type FlowMatch struct {
 	TcpFlags     *uint16           // TCP flags
 	TcpFlagsMask *uint16           // Mask for TCP flags
 
-	CtStates      *openflow13.CTStates
-	CtMark        uint32
-	CtMarkMask    *uint32
-	CtLabelLo     uint64
-	CtLabelHi     uint64
-	CtLabelLoMask uint64
-	CtLabelHiMask uint64
+	CtStates *openflow13.CTStates
 }
 
 // additional actions in flow's instruction set
@@ -87,6 +81,15 @@ type ConnTrackAction struct {
 	Table   *uint8
 	Zone    *uint16
 	Actions []openflow13.Action
+}
+
+func NewConntrackAction(commit bool, force bool, table *uint8, zone *uint16) *ConnTrackAction {
+	return &ConnTrackAction{
+		Commit: commit,
+		Force:  force,
+		Table:  table,
+		Zone:   zone,
+	}
 }
 
 func (c *ConnTrackAction) installConntrackAction() openflow13.Action {
@@ -300,11 +303,6 @@ func (self *Flow) xlateMatch() openflow13.Match {
 		ofMatch.AddField(*ctStateField)
 	}
 
-	if self.Match.CtMark != 0 {
-		ctMarkField := openflow13.NewCTMarkMatchField(self.Match.CtMark, self.Match.CtMarkMask)
-		ofMatch.AddField(*ctMarkField)
-	}
-
 	return *ofMatch
 }
 
@@ -468,14 +466,6 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 
 			log.Debugf("flow install. Added setUDPDst Action: %+v", setUDPDstAction)
 
-		case "ct":
-			ctAction := flowAction.conntrack.installConntrackAction()
-
-			err := actInstr.AddAction(ctAction, true)
-			if err != nil {
-				return err
-			}
-
 		default:
 			log.Fatalf("Unknown action type %s", flowAction.actionType)
 		}
@@ -569,18 +559,35 @@ func (self *Flow) Next(elem FgraphElem) error {
 }
 
 func (self *Flow) SetConntrack(connTrackAction *ConnTrackAction) error {
-	action := new(FlowAction)
-	action.actionType = "ct"
-	action.conntrack = connTrackAction
-
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
-	self.flowActions = append(self.flowActions, action)
+	flowMod := openflow13.NewFlowMod()
+	flowMod.TableId = self.Table.TableId
+	flowMod.Priority = self.Match.Priority
+	flowMod.Cookie = self.FlowID
 
-	if self.isInstalled {
-		self.install()
+	if !self.isInstalled {
+		flowMod.Command = openflow13.FC_ADD
+	} else {
+		flowMod.Command = openflow13.FC_MODIFY
 	}
+
+	// convert match fields to openflow 1.3 format
+	flowMod.Match = self.xlateMatch()
+	log.Debugf("flow install: Match: %+v", flowMod.Match)
+
+	instr := openflow13.NewInstrApplyActions()
+	if instr != nil {
+		ctAction := connTrackAction.installConntrackAction()
+		instr.AddAction(ctAction, true)
+		flowMod.AddInstruction(instr)
+
+		log.Debugf("flow install: added output port instr: %+v", instr)
+	}
+
+	self.Table.Switch.Send(flowMod)
+	self.isInstalled = true
 
 	return nil
 }
