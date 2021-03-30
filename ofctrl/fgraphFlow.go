@@ -56,6 +56,14 @@ type FlowMatch struct {
 	TunnelId     uint64            // Vxlan Tunnel id i.e. VNI
 	TcpFlags     *uint16           // TCP flags
 	TcpFlagsMask *uint16           // Mask for TCP flags
+
+	CtStates      *openflow13.CTStates
+	CtMark        uint32
+	CtMarkMask    *uint32
+	CtLabelLo     uint64
+	CtLabelHi     uint64
+	CtLabelLoMask uint64
+	CtLabelHiMask uint64
 }
 
 // additional actions in flow's instruction set
@@ -69,6 +77,38 @@ type FlowAction struct {
 	metadata     uint64           // Metadata in case of "setMetadata"
 	metadataMask uint64           // Metadata mask
 	dscp         uint8            // DSCP field
+
+	conntrack *ConnTrackAction
+}
+
+type ConnTrackAction struct {
+	Commit  bool
+	Force   bool
+	Table   *uint8
+	Zone    *uint16
+	Actions []openflow13.Action
+}
+
+func (c *ConnTrackAction) installConntrackAction() openflow13.Action {
+	ctAction := openflow13.NewNXActionConnTrack()
+
+	if c.Commit {
+		ctAction.Commit()
+	}
+	if c.Force {
+		ctAction.Force()
+	}
+	if c.Table != nil {
+		ctAction.Table(*c.Table)
+	}
+	if c.Zone != nil {
+		ctAction.ZoneImm(*c.Zone)
+	}
+	if c.Actions != nil {
+		ctAction = ctAction.AddAction(c.Actions...)
+	}
+
+	return ctAction
 }
 
 // State of a flow entry
@@ -255,6 +295,16 @@ func (self *Flow) xlateMatch() openflow13.Match {
 		ofMatch.AddField(*tunnelIdField)
 	}
 
+	if self.Match.CtStates != nil {
+		ctStateField := openflow13.NewCTStateMatchField(self.Match.CtStates)
+		ofMatch.AddField(*ctStateField)
+	}
+
+	if self.Match.CtMark != 0 {
+		ctMarkField := openflow13.NewCTMarkMatchField(self.Match.CtMark, self.Match.CtMarkMask)
+		ofMatch.AddField(*ctMarkField)
+	}
+
 	return *ofMatch
 }
 
@@ -418,6 +468,14 @@ func (self *Flow) installFlowActions(flowMod *openflow13.FlowMod,
 
 			log.Debugf("flow install. Added setUDPDst Action: %+v", setUDPDstAction)
 
+		case "ct":
+			ctAction := flowAction.conntrack.installConntrackAction()
+
+			err := actInstr.AddAction(ctAction, true)
+			if err != nil {
+				return err
+			}
+
 		default:
 			log.Fatalf("Unknown action type %s", flowAction.actionType)
 		}
@@ -508,6 +566,23 @@ func (self *Flow) Next(elem FgraphElem) error {
 
 	// Install the flow entry
 	return self.install()
+}
+
+func (self *Flow) SetConntrack(connTrackAction *ConnTrackAction) error {
+	action := new(FlowAction)
+	action.actionType = "ct"
+	action.conntrack = connTrackAction
+
+	self.lock.Lock()
+	defer self.lock.Unlock()
+
+	self.flowActions = append(self.flowActions, action)
+
+	if self.isInstalled {
+		self.install()
+	}
+
+	return nil
 }
 
 // Special actions on the flow to set vlan id
