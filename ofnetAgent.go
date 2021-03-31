@@ -107,6 +107,7 @@ type OfnetAgent struct {
 	statsMutex sync.Mutex        // Sync mutext for modifying stats
 	nameServer NameServer        // DNS lookup
 
+	endpointMutex             sync.RWMutex
 	localEndpointInfo         map[uint32]*endpointInfo
 	ofPortIpAddressUpdateChan chan map[uint32][]net.IP
 	uplinkPortInfo            *PortInfo

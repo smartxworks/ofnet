@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"reflect"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/deckarep/golang-set"
@@ -41,25 +42,18 @@ func NewVlanArpLearnerBridge(agent *OfnetAgent) *VlanArpLearnerBridge {
 	return vlanArpLearner
 }
 
-func (self *VlanArpLearnerBridge) installArpRedirectFlow() error {
-	// Send all arp packet to openflow controller
-	sw := self.ofSwitch
-	arpRedirectFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
-		Priority:  FLOW_MATCH_PRIORITY + 2,
-		Ethertype: 0x0806,
-	})
-
-	if err != nil {
-		log.Errorf("Error when add local endpoint arp redirect flow")
-		return err
-	}
-	arpRedirectFlow.Next(sw.SendToController())
-	self.arpRedirectFlow = arpRedirectFlow
-
-	return nil
-}
-
 func (self *VlanArpLearnerBridge) installFromUplinkFlow(ofPort uint32) error {
+	// Arp form uplink: normal
+	fromUplinkArpDirectFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY + 3,
+		Ethertype: 0x0806,
+		InputPort: ofPort,
+	})
+	if err != nil {
+		log.Fatalf("Failed to create fromUplinkArpDirectFlow: %+v", err)
+	}
+	fromUplinkArpDirectFlow.Next(self.nmlTable)
+
 	// Add uplink port redirect flow: redirect to normalLookupFlow.
 	ingressTier0Table := self.ofSwitch.GetTable(INGRESS_TIER0_TBL_ID)
 	egressSelectTable := self.ofSwitch.GetTable(EGRESS_SELECT_TBL_ID)
@@ -95,43 +89,22 @@ func (self *VlanArpLearnerBridge) installFromUplinkFlow(ofPort uint32) error {
 		return err
 	}
 
-	self.fromUplinkFlow[ofPort] = []*ofctrl.Flow{inputFromUplinkIpFlow, inputFromUplinkIp6Flow}
+	self.fromUplinkFlow[ofPort] = []*ofctrl.Flow{inputFromUplinkIpFlow, inputFromUplinkIp6Flow, fromUplinkArpDirectFlow}
 	return nil
 }
 
-func (self *VlanArpLearnerBridge) installFromLocalIpFlow() error {
-	// Send all ip flow except fromUplinkFlow to egressTier0Table
-	egressTier0Table := self.ofSwitch.GetTable(EGRESS_TIER0_TBL_ID)
-	egressSelectTable := self.ofSwitch.GetTable(EGRESS_SELECT_TBL_ID)
-
-	inputIpFromLocalFlow, err := egressSelectTable.NewFlow(ofctrl.FlowMatch{
-		Priority:  FLOW_MATCH_PRIORITY,
-		Ethertype: 0x0800,
+func (self *VlanArpLearnerBridge) installFromLocalFlow() error {
+	// Arp from localendpoint: redirect to controller
+	fromLocalEndpointArpFlow, err := self.inputTable.NewFlow(ofctrl.FlowMatch{
+		Priority:  FLOW_MATCH_PRIORITY + 2,
+		Ethertype: 0x0806,
 	})
 	if err != nil {
-		log.Errorf("Error when create inputTable inputFromLocalIpFlow. Err: %v", err)
-		return err
+		log.Fatalf("Failed to create fromLocalEndpointArpFlow: %+v", err)
 	}
-	inputIp6FromLocalFlow, err := egressSelectTable.NewFlow(ofctrl.FlowMatch{
-		Priority:  FLOW_MATCH_PRIORITY,
-		Ethertype: 0x86DD,
-	})
-	if err != nil {
-		log.Errorf("Error when create inputTable inputFromUplinkIp6Flow. Err: %v", err)
-		return err
-	}
-	err = inputIpFromLocalFlow.Next(egressTier0Table)
-	if err != nil {
-		log.Errorf("Error when create inputTable inputFromLocalIpFlow action. Err: %v", err)
-		return err
-	}
-	err = inputIp6FromLocalFlow.Next(egressTier0Table)
-	if err != nil {
-		log.Errorf("Error when create inputTable inputFromLocalIp6Flow action. Err: %v", err)
-		return err
-	}
+	fromLocalEndpointArpFlow.Next(self.ofSwitch.SendToController())
 
-	self.fromLocalFlow = []*ofctrl.Flow{inputIpFromLocalFlow, inputIp6FromLocalFlow}
+	self.fromLocalFlow = []*ofctrl.Flow{fromLocalEndpointArpFlow}
 
 	return nil
 }
@@ -146,7 +119,6 @@ func (self *VlanArpLearnerBridge) AddUplink(uplinkPort *PortInfo) error {
 		log.Errorf("%d uplink port already exists.", uplinkPortNum)
 		return errors.New("uplinkPort already exists")
 	}
-	self.installFromLocalIpFlow()
 
 	for _, link := range uplinkPort.MbrLinks {
 		err = self.installFromUplinkFlow(link.OfPort)
@@ -155,6 +127,12 @@ func (self *VlanArpLearnerBridge) AddUplink(uplinkPort *PortInfo) error {
 			return err
 		}
 	}
+
+	err = self.installFromLocalFlow()
+	if err != nil {
+		return err
+	}
+
 	// TODO Add uplink status management and GARP func
 
 	self.uplinkPortDb.Set(uplinkPort.Name, uplinkPort)
@@ -224,8 +202,6 @@ func (self *VlanArpLearnerBridge) initFgraph() error {
 	})
 	inputMissFlow.Next(self.nmlTable)
 
-	self.installArpRedirectFlow()
-
 	normalLookupFlow, _ := self.nmlTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
@@ -270,13 +246,10 @@ func (self *VlanArpLearnerBridge) PacketRcvd(sw *ofctrl.OFSwitch, pkt *ofctrl.Pa
 }
 
 func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint32) {
-	var isLearning bool = false
+	self.agent.endpointMutex.Lock()
+	defer self.agent.endpointMutex.Unlock()
 
-	// If ofSwitch appinterface was initialized, but uplink wasn't, just send received arp packet normally
-	if self.uplinkPortDb.IsEmpty() {
-		self.arpNoraml(pkt, inPort)
-		return
-	}
+	var isLearning bool = false
 
 	switch t := pkt.Data.(type) {
 	case *protocol.ARP:
@@ -301,7 +274,7 @@ func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint3
 }
 
 func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32) {
-	var ofPortUpdatedPorts, ipAddrUpdatedPorts, deprecatedEndpointOfPorts []uint32
+	var ofPortUpdatedPorts, ipAddrUpdatedPorts []uint32
 
 	if self.isLocalInputPort(inPort) {
 		ofPortUpdatedPorts, ipAddrUpdatedPorts = self.filterByMacAddr(arpIn, inPort)
@@ -310,7 +283,6 @@ func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32
 		if len(ofPortUpdatedPorts) == 0 && len(ipAddrUpdatedPorts) == 0 {
 			log.Infof("Learning localOfPort endpointInfo %d : %v.", inPort, arpIn.IPSrc)
 			self.addLocalEndpointInfoEntry(arpIn, inPort)
-			self.installIngressSelectFlow(arpIn.HWSrc)
 			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
 			return
 		}
@@ -330,29 +302,7 @@ func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32
 			self.addLocalEndpointInfoEntry(arpIn, inPort)
 			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
 		}
-	} else {
-		deprecatedEndpointOfPorts = self.filterByIpAddr(arpIn, inPort)
-
-		// Flush map[ofport]endpointInfo, update local agentmonitor ofPortIpAddressCache
-		for _, ofPort := range deprecatedEndpointOfPorts {
-			log.Infof("Flush Learned localOfPort endpointInfo %d : %v.", ofPort, arpIn.IPSrc)
-			self.uninstallIngressSelectFlow(arpIn.HWSrc)
-			delete(self.agent.localEndpointInfo, ofPort)
-			self.notifyLocalEndpointInfoUpdate(arpIn, ofPort, true)
-		}
 	}
-}
-
-func (self *VlanArpLearnerBridge) filterByIpAddr(arpIn protocol.ARP, inPort uint32) []uint32 {
-	var ports []uint32
-
-	for ofPort, endpointInfo := range self.agent.localEndpointInfo {
-		if endpointInfo.IpAddr.Equal(arpIn.IPSrc) && ofPort != inPort {
-			ports = append(ports, ofPort)
-		}
-	}
-
-	return ports
 }
 
 func (self *VlanArpLearnerBridge) filterByMacAddr(arpIn protocol.ARP, inPort uint32) ([]uint32, []uint32) {
@@ -462,11 +412,29 @@ func (self *VlanArpLearnerBridge) MasterAdded(master *OfnetNode) error {
 }
 
 func (self *VlanArpLearnerBridge) AddLocalEndpoint(endpoint OfnetEndpoint) error {
-	return nil
+	dstMac, err := net.ParseMAC(endpoint.MacAddrStr)
+	if err != nil {
+		log.Fatalf("Bad format: %+v; parsing local endpoint MacAddr error: %+v", endpoint.MacAddrStr, err)
+	}
+
+	return self.installIngressSelectFlow(dstMac)
 }
 
 func (self *VlanArpLearnerBridge) RemoveLocalEndpoint(endpoint OfnetEndpoint) error {
-	return nil
+	self.agent.endpointMutex.Lock()
+	defer self.agent.endpointMutex.Unlock()
+
+	dstMac, err := net.ParseMAC(endpoint.MacAddrStr)
+	if err != nil {
+		log.Fatalf("Bad format: %+v; parsing local endpoint MacAddr error: %+v", endpoint.MacAddrStr, err)
+	}
+	for ofPort, endpointInfo := range self.agent.localEndpointInfo {
+		if reflect.DeepEqual(dstMac, endpointInfo.MacAddr) {
+			delete(self.agent.localEndpointInfo, ofPort)
+		}
+	}
+
+	return self.uninstallIngressSelectFlow(dstMac)
 }
 
 func (self *VlanArpLearnerBridge) UpdateLocalEndpoint(ep *OfnetEndpoint, epInfo EndpointInfo) error {
