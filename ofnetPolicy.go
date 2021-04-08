@@ -394,7 +394,7 @@ func (self *PolicyAgent) InitTables(nextTblId uint8) error {
 	egressSelectTableDefaultFlow, _ := self.egressSelectTable.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
 	})
-	egressSelectTableDefaultFlow.Next(self.egressTier0Table)
+	egressSelectTableDefaultFlow.Next(self.ingressTier0Table)
 
 	egressTier0TableDefaultFlow, _ := self.egressTier0Table.NewFlow(ofctrl.FlowMatch{
 		Priority: FLOW_MISS_PRIORITY,
