@@ -32,7 +32,10 @@ type VlanArpLearnerBridge struct {
 	ingressSelectFlow      map[string]*ofctrl.Flow
 	uplinkPortDb           cmap.ConcurrentMap
 
-	policyAgent *PolicyAgent
+	policyAgent  *PolicyAgent
+	garpMutex    *sync.Mutex
+	epMap        map[string]GARPInfo
+	garpBGActive bool
 }
 
 func NewVlanArpLearnerBridge(agent *OfnetAgent) *VlanArpLearnerBridge {
@@ -42,6 +45,9 @@ func NewVlanArpLearnerBridge(agent *OfnetAgent) *VlanArpLearnerBridge {
 	vlanArpLearner.ingressSelectFlow = make(map[string]*ofctrl.Flow)
 	vlanArpLearner.uplinkPortDb = cmap.New()
 	vlanArpLearner.policyAgent = NewPolicyAgent(agent, nil)
+	vlanArpLearner.epMap = make(map[string]GARPInfo)
+	vlanArpLearner.garpMutex = &sync.Mutex{}
+	vlanArpLearner.garpBGActive = false
 
 	return vlanArpLearner
 }
@@ -148,7 +154,82 @@ func (self *VlanArpLearnerBridge) AddUplink(uplinkPort *PortInfo) error {
 }
 
 func (self *VlanArpLearnerBridge) UpdateUplink(uplinkName string, update PortUpdates) error {
-	// TODO. add uplink status management
+	for _, portUpdate := range update.Updates {
+		switch portUpdate.UpdateType {
+		case BondActiveSlaveSwitch:
+			curActiveSlaveOfPort := portUpdate.UpdateInfo.(LinkUpdateInfo).ActiveSlaveOfPort
+			self.sendGARPAll(curActiveSlaveOfPort)
+		default:
+			log.Errorf("Unknow update: %+v", portUpdate)
+		}
+	}
+
+	return nil
+}
+
+func (self *VlanArpLearnerBridge) sendGARPAll(curActiveSlaveOfPort uint32) {
+	self.garpMutex.Lock()
+	defer self.garpMutex.Unlock()
+
+	count := 0
+	for ofPort, ep := range self.epMap {
+		ep.garpCount = GARPRepeats
+		self.epMap[ofPort] = ep
+		count++
+	}
+
+	if !self.garpBGActive && count > 0 {
+		log.Infof("GARPs will be sent for %d eps", count)
+		go self.backGroundGARPs(curActiveSlaveOfPort)
+		self.garpBGActive = true
+	}
+}
+
+func (self *VlanArpLearnerBridge) backGroundGARPs(activeSlaveOfport uint32) {
+	for {
+		self.garpMutex.Lock()
+
+		workDone := false
+		for endpointID, ep := range self.epMap {
+			if ep.garpCount <= 0 {
+				continue
+			}
+
+			ep.garpCount--
+
+			err := self.sendGARP(activeSlaveOfport, ep.ip, ep.mac, ep.vlan)
+			if err == nil {
+				self.agent.incrStats("GARPSent")
+			} else {
+				log.Warnf("Send GARP failed for ep IP: %v", ep.ip)
+			}
+
+			self.epMap[endpointID] = ep
+
+			workDone = true
+		}
+
+		if !workDone { // No ep pending. Time to exit
+			self.garpBGActive = false
+			self.garpMutex.Unlock()
+			return
+		}
+
+		self.garpMutex.Unlock()
+		time.Sleep(GARPDELAY * time.Second)
+	}
+}
+
+func (self *VlanArpLearnerBridge) sendGARP(ofPort uint32, ip net.IP, mac net.HardwareAddr, vlanID uint16) error {
+	pktOut := BuildGarpPkt(ip, mac, vlanID)
+	pktOut.AddAction(openflow13.NewActionOutput(ofPort))
+
+	// Send it out
+	if self.ofSwitch != nil {
+		self.ofSwitch.Send(pktOut)
+		self.agent.incrStats("GarpPktSent")
+	}
+
 	return nil
 }
 
@@ -416,6 +497,20 @@ func (self *VlanArpLearnerBridge) AddLocalEndpoint(endpoint OfnetEndpoint) error
 		log.Fatalf("Bad format: %+v; parsing local endpoint MacAddr error: %+v", endpoint.MacAddrStr, err)
 	}
 
+	// update epDB
+	if endpoint.EndpointVlan != 0 {
+		self.garpMutex.Lock()
+
+		ep := GARPInfo{
+			garpCount: GARPRepeats,
+			mac:       dstMac,
+			vlan:      endpoint.EndpointVlan,
+		}
+		self.epMap[fmt.Sprintf("%+8d", endpoint.PortNo)] = ep
+
+		self.garpMutex.Unlock()
+	}
+
 	return self.installIngressSelectFlow(dstMac)
 }
 
@@ -424,6 +519,11 @@ func (self *VlanArpLearnerBridge) RemoveLocalEndpoint(endpoint OfnetEndpoint) er
 	if err != nil {
 		log.Fatalf("Bad format: %+v; parsing local endpoint MacAddr error: %+v", endpoint.MacAddrStr, err)
 	}
+
+	// Remove from ep DB
+	self.garpMutex.Lock()
+	delete(self.epMap, fmt.Sprintf("%+8d", endpoint.PortNo))
+	self.garpMutex.Unlock()
 
 	return self.uninstallIngressSelectFlow(dstMac)
 }

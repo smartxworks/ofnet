@@ -324,6 +324,7 @@ type PortUpdate struct {
 
 // LACP update
 type LinkUpdateInfo struct {
-	LinkName   string
-	LacpStatus bool
+	LinkName          string
+	LacpStatus        bool
+	ActiveSlaveOfPort uint32
 }
