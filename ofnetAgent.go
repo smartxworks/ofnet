@@ -634,6 +634,32 @@ func (self *OfnetAgent) GlobalConfigUpdate(cfg OfnetGlobalConfig) error {
 func (self *OfnetAgent) AddLocalEndpoint(endpoint EndpointInfo) error {
 	// Add port vlan mapping
 	log.Infof("Received local endpoint add for {%+v}", endpoint)
+
+	// For vlanArpLearner datapath
+	if self.dpName == "vlanArpLearner" {
+		if endpointObj, _ := self.localEndpointDb.Get(fmt.Sprint(endpoint.PortNo)); endpointObj != nil {
+			// Already added local endpoint, ignore it
+			log.Errorf("Local endpoint %+v already exists", endpointObj)
+			return nil
+		}
+
+		ofnetEndpoint := &OfnetEndpoint{
+			PortNo:     endpoint.PortNo,
+			MacAddrStr: endpoint.MacAddr.String(),
+			Vlan:       endpoint.Vlan,
+		}
+
+		err := self.datapath.AddLocalEndpoint(*ofnetEndpoint)
+		if err != nil {
+			log.Errorf("Failed to adding endpoint (%+v) to datapath. Err: %v", ofnetEndpoint, err)
+			return err
+		}
+
+		self.localEndpointDb.Set(fmt.Sprint(endpoint.PortNo), ofnetEndpoint)
+
+		return nil
+	}
+
 	self.portVlanMapMutex.Lock()
 	self.portVlanMap[endpoint.PortNo] = &endpoint.Vlan
 	self.portVlanMapMutex.Unlock()
@@ -756,6 +782,26 @@ func (self *OfnetAgent) RemoveLocalEndpointByID(epID string) error {
 func (self *OfnetAgent) RemoveLocalEndpoint(portNo uint32) error {
 	// increment stats
 	self.incrStats("RemoveLocalEndpoint")
+
+	// for
+	if self.dpName == "vlanArpLearner" {
+		endpointObj, _ := self.localEndpointDb.Get(fmt.Sprint(portNo))
+		if endpointObj == nil {
+			err := fmt.Errorf("Endpoint was not found for ofPort %d", portNo)
+			log.Error(err)
+			return err
+		}
+		ofnetEndpoint := endpointObj.(*OfnetEndpoint)
+
+		err := self.datapath.RemoveLocalEndpoint(*ofnetEndpoint)
+		if err != nil {
+			log.Errorf("Error deleting endpoint info: %+v. Err: %v", *ofnetEndpoint, err)
+		}
+
+		self.localEndpointDb.Remove(fmt.Sprint(portNo))
+
+		return nil
+	}
 
 	// find the local copy
 	epreg, _ := self.localEndpointDb.Get(fmt.Sprint(portNo))
