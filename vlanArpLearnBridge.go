@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -21,14 +22,16 @@ type VlanArpLearnerBridge struct {
 	agent    *OfnetAgent
 	ofSwitch *ofctrl.OFSwitch
 
-	inputTable         *ofctrl.Table
-	ingressSelectTable *ofctrl.Table
-	nmlTable           *ofctrl.Table
-	arpRedirectFlow    *ofctrl.Flow
-	fromUplinkFlow     map[uint32][]*ofctrl.Flow
-	fromLocalFlow      []*ofctrl.Flow
-	ingressSelectFlow  map[string]*ofctrl.Flow
-	uplinkPortDb       cmap.ConcurrentMap
+	inputTable             *ofctrl.Table
+	ingressSelectTable     *ofctrl.Table
+	nmlTable               *ofctrl.Table
+	arpRedirectFlow        *ofctrl.Flow
+	fromUplinkFlowMutex    sync.RWMutex
+	fromUplinkFlow         map[uint32][]*ofctrl.Flow
+	fromLocalFlow          []*ofctrl.Flow
+	ingressSelectFlowMutex sync.RWMutex
+	ingressSelectFlow      map[string]*ofctrl.Flow
+	uplinkPortDb           cmap.ConcurrentMap
 
 	policyAgent *PolicyAgent
 }
@@ -122,6 +125,9 @@ func (self *VlanArpLearnerBridge) AddUplink(uplinkPort *PortInfo) error {
 		return errors.New("uplinkPort already exists")
 	}
 
+	self.fromUplinkFlowMutex.Lock()
+	defer self.fromUplinkFlowMutex.Unlock()
+
 	for _, link := range uplinkPort.MbrLinks {
 		err = self.installFromUplinkFlow(link.OfPort)
 
@@ -148,6 +154,9 @@ func (self *VlanArpLearnerBridge) UpdateUplink(uplinkName string, update PortUpd
 }
 
 func (self *VlanArpLearnerBridge) RemoveUplink(uplinkName string) error {
+	self.fromUplinkFlowMutex.Lock()
+	defer self.fromUplinkFlowMutex.Unlock()
+
 	uplinkPort := self.GetUplink(uplinkName)
 	if uplinkPort == nil {
 		err := fmt.Errorf("Could not get uplink with name: %s", uplinkName)
@@ -229,11 +238,11 @@ func (self *VlanArpLearnerBridge) SwitchConnected(sw *ofctrl.OFSwitch) {
 	self.policyAgent.SwitchConnected(sw)
 	self.initFgraph()
 
-    // Delete flow with previousRoundNum cookie, and then persistent curRoundNum to ovsdb. We need to wait for long
-    // enough to guarantee that all of the basic flow which we are still required updated with new roundInfo encoding to
-    // flow cookie fields. But the time required to update all of the basic flow with updated roundInfo is
-    // non-determined.
-    // TODO  Implement a deterministic mechanism to control outdated flow flush procedure
+	// Delete flow with previousRoundNum cookie, and then persistent curRoundNum to ovsdb. We need to wait for long
+	// enough to guarantee that all of the basic flow which we are still required updated with new roundInfo encoding to
+	// flow cookie fields. But the time required to update all of the basic flow with updated roundInfo is
+	// non-determined.
+	// TODO  Implement a deterministic mechanism to control outdated flow flush procedure
 	go func() {
 		time.Sleep(time.Second * 15)
 		self.ofSwitch.DeleteFlowByRoundInfo(roundInfo.previousRoundNum)
@@ -392,6 +401,9 @@ func (self *VlanArpLearnerBridge) addLocalEndpointInfoEntry(arpIn protocol.ARP, 
 }
 
 func (self *VlanArpLearnerBridge) installIngressSelectFlow(macDa net.HardwareAddr) error {
+	self.ingressSelectFlowMutex.Lock()
+	defer self.ingressSelectFlowMutex.Unlock()
+
 	ingressSelectTable := self.ofSwitch.GetTable(INGRESS_SELECT_TBL_ID)
 	ingressTier0Table := self.ofSwitch.GetTable(INGRESS_TIER0_TBL_ID)
 
@@ -407,6 +419,9 @@ func (self *VlanArpLearnerBridge) installIngressSelectFlow(macDa net.HardwareAdd
 }
 
 func (self *VlanArpLearnerBridge) uninstallIngressSelectFlow(macDa net.HardwareAddr) error {
+	self.ingressSelectFlowMutex.Lock()
+	defer self.ingressSelectFlowMutex.Unlock()
+
 	if flow, ok := self.ingressSelectFlow[macDa.String()]; ok {
 		flow.Delete()
 		delete(self.ingressSelectFlow, macDa.String())
