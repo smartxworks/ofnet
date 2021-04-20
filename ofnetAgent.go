@@ -43,15 +43,6 @@ import (
 
 const OfnetRestartRound string = "ofnetRestartRound"
 
-type OVSPort string
-type endpointInfo struct {
-	OVSPort OVSPort
-	OfPort  uint32
-	IpAddr  net.IP
-	Ip6Addr net.IP
-	MacAddr net.HardwareAddr
-}
-
 // OfnetAgent state
 type OfnetAgent struct {
 	ctrler      *ofctrl.Controller // Controller instance
@@ -111,7 +102,6 @@ type OfnetAgent struct {
 	nameServer NameServer        // DNS lookup
 
 	endpointMutex             sync.RWMutex
-	localEndpointInfo         map[uint32]*endpointInfo
 	ofPortIpAddressUpdateChan chan map[uint32][]net.IP
 	uplinkPortInfo            *PortInfo
 	roundInfo                 *RoundInfo
@@ -278,7 +268,6 @@ func NewOfnetAgent(bridgeName string, dpName string, localIp net.IP, rpcPort uin
 
 	// Create an openflow controller
 	agent.ctrler = ofctrl.NewController(agent)
-	agent.localEndpointInfo = make(map[uint32]*endpointInfo)
 	agent.ofPortIpAddressUpdateChan = ofPortIpAddressUpdateChan
 	agent.uplinkPortInfo = uplinkPortInfo
 

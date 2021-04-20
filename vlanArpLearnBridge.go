@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"reflect"
 	"sync"
 	"time"
 
@@ -282,86 +281,57 @@ func (self *VlanArpLearnerBridge) PacketRcvd(sw *ofctrl.OFSwitch, pkt *ofctrl.Pa
 }
 
 func (self *VlanArpLearnerBridge) processArp(pkt protocol.Ethernet, inPort uint32) {
-	self.agent.endpointMutex.Lock()
-	defer self.agent.endpointMutex.Unlock()
-
-	var isLearning bool = false
-
 	switch t := pkt.Data.(type) {
 	case *protocol.ARP:
 		var arpIn protocol.ARP = *t
 
-		endpointInfo, ok := self.agent.localEndpointInfo[inPort]
-		if !ok {
-			log.Infof("local ofport %d related ovsport was't learned or ofPort update", inPort)
-			isLearning = true
-		} else {
-			if !endpointInfo.IpAddr.Equal(arpIn.IPSrc) {
-				log.Infof("local ofport %d related endpoint ipaddress update from %v to %v", inPort, endpointInfo.IpAddr, arpIn.IPSrc)
-				isLearning = true
+		for endpointObj := range self.agent.localEndpointDb.IterBuffered() {
+			endpoint := endpointObj.Val.(*OfnetEndpoint)
+
+			if endpoint.MacAddrStr == arpIn.HWSrc.String() && endpoint.PortNo != inPort {
+				log.Infof("Update localOfPort endpointInfo from %d : %v to %d : %v", endpoint.PortNo,
+					endpoint.IpAddr, inPort, arpIn.IPSrc)
+
+				// Clean localEndpoint entry of old ofPort.
+				self.agent.localEndpointDb.Remove(fmt.Sprint(endpoint.PortNo))
+				self.notifyLocalEndpointInfoUpdate(arpIn, endpoint.PortNo, true)
+
+				learnedIp := make(net.IP, len(arpIn.IPSrc))
+				copy(learnedIp, arpIn.IPSrc)
+				ofnetEndpoint := &OfnetEndpoint{
+					IpAddr:     learnedIp,
+					MacAddrStr: endpoint.MacAddrStr,
+					PortNo:     inPort,
+				}
+
+				self.agent.localEndpointDb.Set(fmt.Sprint(inPort), ofnetEndpoint)
+				self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
+			}
+
+			if endpoint.MacAddrStr == arpIn.HWSrc.String() && endpoint.PortNo == inPort &&
+				!endpoint.IpAddr.Equal(arpIn.IPSrc) {
+				log.Infof("Update ip address of local endpoint with ofPort %d from %v to %v.", inPort,
+					endpoint.IpAddr, arpIn.IPSrc)
+
+				learnedIp := make(net.IP, len(arpIn.IPSrc))
+				copy(learnedIp, arpIn.IPSrc)
+
+				ofnetEndpoint := &OfnetEndpoint{
+					IpAddr:     learnedIp,
+					MacAddrStr: endpoint.MacAddrStr,
+					PortNo:     inPort,
+				}
+
+				self.agent.localEndpointDb.Set(fmt.Sprint(inPort), ofnetEndpoint)
+				self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
 			}
 		}
 
-		if isLearning {
-			self.learnFromArp(arpIn, inPort)
-		}
+		// Don't add endpoint from received arp pkt event. We just add local endpoint from control-plane
+		// Already exists endpoint, just send out normally
+
 		self.arpNoraml(pkt, inPort)
 	}
-}
-
-func (self *VlanArpLearnerBridge) learnFromArp(arpIn protocol.ARP, inPort uint32) {
-	var ofPortUpdatedPorts, ipAddrUpdatedPorts []uint32
-
-	if self.isLocalInputPort(inPort) {
-		ofPortUpdatedPorts, ipAddrUpdatedPorts = self.filterByMacAddr(arpIn, inPort)
-
-		// ArpIn related endpointInfo entry not exists, just add it
-		if len(ofPortUpdatedPorts) == 0 && len(ipAddrUpdatedPorts) == 0 {
-			log.Infof("Learning localOfPort endpointInfo %d : %v.", inPort, arpIn.IPSrc)
-			self.addLocalEndpointInfoEntry(arpIn, inPort)
-			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
-			return
-		}
-
-		// ArpIn related endpointInfo entry already exists, Update map[ofport]endpointInfo
-		for _, ofPort := range ofPortUpdatedPorts {
-			log.Infof("Update localOfPort endpointInfo from %d : %v to %d : %v", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, inPort, arpIn.IPSrc)
-			delete(self.agent.localEndpointInfo, ofPort)
-			self.notifyLocalEndpointInfoUpdate(arpIn, ofPort, true)
-
-			self.addLocalEndpointInfoEntry(arpIn, inPort)
-			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
-		}
-
-		for _, ofPort := range ipAddrUpdatedPorts {
-			log.Infof("Update ip address of local endpoint with ofPort %d from %v to %v.", ofPort, self.agent.localEndpointInfo[ofPort].IpAddr, arpIn.IPSrc)
-			self.addLocalEndpointInfoEntry(arpIn, inPort)
-			self.notifyLocalEndpointInfoUpdate(arpIn, inPort, false)
-		}
-	}
-}
-
-func (self *VlanArpLearnerBridge) filterByMacAddr(arpIn protocol.ARP, inPort uint32) ([]uint32, []uint32) {
-	var ofPortUpdatedPorts, ipAddrUpdatedPorts []uint32
-
-	for ofPort, endpointInfo := range self.agent.localEndpointInfo {
-		if endpointInfo.MacAddr.String() == arpIn.HWSrc.String() && ofPort != inPort {
-			ofPortUpdatedPorts = append(ofPortUpdatedPorts, ofPort)
-		}
-		if endpointInfo.MacAddr.String() == arpIn.HWSrc.String() && ofPort == inPort &&
-			!endpointInfo.IpAddr.Equal(arpIn.IPSrc) {
-			ipAddrUpdatedPorts = append(ipAddrUpdatedPorts, ofPort)
-		}
-	}
-
-	return ofPortUpdatedPorts, ipAddrUpdatedPorts
-}
-
-func (self *VlanArpLearnerBridge) isLocalInputPort(inPort uint32) bool {
-	uplinkOfPortSet := self.getUplinkPort()
-	isUplinkPort := uplinkOfPortSet.Contains(inPort)
-
-	return !isUplinkPort
 }
 
 func (self *VlanArpLearnerBridge) getUplinkPort() mapset.Set {
@@ -385,19 +355,6 @@ func (self *VlanArpLearnerBridge) notifyLocalEndpointInfoUpdate(arpIn protocol.A
 		updatedOfPortInfo[ofPort] = []net.IP{arpIn.IPSrc}
 	}
 	self.agent.ofPortIpAddressUpdateChan <- updatedOfPortInfo
-}
-
-func (self *VlanArpLearnerBridge) addLocalEndpointInfoEntry(arpIn protocol.ARP, ofPort uint32) {
-	learnedIp := make(net.IP, len(arpIn.IPSrc))
-	learnedMac := make(net.HardwareAddr, len(arpIn.HWSrc))
-	copy(learnedIp, arpIn.IPSrc)
-	copy(learnedMac, arpIn.HWSrc)
-	endpointInfo := &endpointInfo{
-		OfPort:  ofPort,
-		IpAddr:  learnedIp,
-		MacAddr: learnedMac,
-	}
-	self.agent.localEndpointInfo[ofPort] = endpointInfo
 }
 
 func (self *VlanArpLearnerBridge) installIngressSelectFlow(macDa net.HardwareAddr) error {
@@ -463,17 +420,9 @@ func (self *VlanArpLearnerBridge) AddLocalEndpoint(endpoint OfnetEndpoint) error
 }
 
 func (self *VlanArpLearnerBridge) RemoveLocalEndpoint(endpoint OfnetEndpoint) error {
-	self.agent.endpointMutex.Lock()
-	defer self.agent.endpointMutex.Unlock()
-
 	dstMac, err := net.ParseMAC(endpoint.MacAddrStr)
 	if err != nil {
 		log.Fatalf("Bad format: %+v; parsing local endpoint MacAddr error: %+v", endpoint.MacAddrStr, err)
-	}
-	for ofPort, endpointInfo := range self.agent.localEndpointInfo {
-		if reflect.DeepEqual(dstMac, endpointInfo.MacAddr) {
-			delete(self.agent.localEndpointInfo, ofPort)
-		}
 	}
 
 	return self.uninstallIngressSelectFlow(dstMac)
