@@ -261,7 +261,13 @@ func (self *PolicyAgent) AddRuleToTier(rule *OfnetPolicyRule, direction uint8, t
 	}
 
 	// Point it to next table
-	if rule.Action == "allow" {
+	if rule.Action == "passthrough" {
+		err = ruleFlow.Next(self.conntrackCommitTable)
+		if err != nil {
+			log.Errorf("Error installing flow {%+v}. Err: %v", ruleFlow, err)
+			return err
+		}
+	} else if rule.Action == "allow" {
 		err = ruleFlow.Next(nextTable)
 		if err != nil {
 			log.Errorf("Error installing flow {%+v}. Err: %v", ruleFlow, err)
