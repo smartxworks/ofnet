@@ -126,10 +126,10 @@ func (self *PolicyAgent) GetTierTable(direction uint8, tier uint8) (*ofctrl.Tabl
 		switch tier {
 		case POLICY_TIER0:
 			policyTable = self.egressTier0Table
-			nextTable = self.egressTier1Table
+			nextTable = self.ingressSelectTable
 		case POLICY_TIER1:
 			policyTable = self.egressTier1Table
-			nextTable = self.egressTier2Table
+			nextTable = self.ingressSelectTable
 		case POLICY_TIER2:
 			policyTable = self.egressTier2Table
 			nextTable = self.ingressSelectTable
@@ -140,10 +140,10 @@ func (self *PolicyAgent) GetTierTable(direction uint8, tier uint8) (*ofctrl.Tabl
 		switch tier {
 		case POLICY_TIER0:
 			policyTable = self.ingressTier0Table
-			nextTable = self.ingressTier1Table
+			nextTable = self.conntrackCommitTable
 		case POLICY_TIER1:
 			policyTable = self.ingressTier1Table
-			nextTable = self.ingressTier2Table
+			nextTable = self.conntrackCommitTable
 		case POLICY_TIER2:
 			policyTable = self.ingressTier2Table
 			nextTable = self.conntrackCommitTable
