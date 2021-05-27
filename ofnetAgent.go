@@ -41,7 +41,10 @@ import (
 	cmap "github.com/streamrail/concurrent-map"
 )
 
-const OfnetRestartRound string = "ofnetRestartRound"
+const (
+	BondActiveSlaveSwitch string = "bondActiveSlaveSwitch"
+	OfnetRestartRound     string = "ofnetRestartRound"
+)
 
 // OfnetAgent state
 type OfnetAgent struct {
